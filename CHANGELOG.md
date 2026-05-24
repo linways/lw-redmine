@@ -41,4 +41,4 @@ Initial public release.
 - Untrusted-content wrappers for issue bodies and comments (`wrapUntrusted`).
 - Scrubbed environment forwarding for spawned subprocesses (`scrubbedEnv`).
 
-[0.1.0]: https://github.com/sibincbaby/lw-redmine/releases/tag/v0.1.0
+[0.1.0]: https://github.com/linways/lw-redmine/releases/tag/v0.1.0

@@ -1,18 +1,18 @@
 {
-  "name": "@sibincbaby/lw-redmine",
+  "name": "@linways/lw-redmine",
   "version": "0.1.0",
   "description": "lwr — Redmine CLI for AI agents",
-  "author": "Sibin C Baby <sibincbaby219@gmail.com>",
-  "homepage": "https://github.com/sibincbaby/lw-redmine#readme",
+  "author": "Sibin C Baby <sibin@linways.com>",
+  "homepage": "https://github.com/linways/lw-redmine#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/sibincbaby/lw-redmine.git"
+    "url": "git+https://github.com/linways/lw-redmine.git"
   },
   "bugs": {
-    "url": "https://github.com/sibincbaby/lw-redmine/issues"
+    "url": "https://github.com/linways/lw-redmine/issues"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "restricted"
   },
   "bin": {
     "lwr": "./dist/cli.js"
