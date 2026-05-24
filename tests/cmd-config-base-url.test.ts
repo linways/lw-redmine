@@ -1,11 +1,12 @@
 /**
- * `lwr config base-url <url>` + the CONFIG_BASE_URL_MISSING resolution
- * path.
+ * `lwr config base-url <url>` + the resolution-chain behaviour.
  *
  * Three scenarios:
  *   1. Happy path: persists config.defaultBaseUrl + mirrors to profile.baseUrl.
  *   2. Invalid URL (http:// non-loopback) → VALIDATION_BAD_VALUE.
- *   3. resolveBaseUrl with all layers empty → CONFIG_BASE_URL_MISSING with hint.
+ *   3. resolveBaseUrl with all dynamic layers empty → falls through to
+ *      compile-time DEFAULT_BASE_URL (or throws CONFIG_BASE_URL_MISSING
+ *      on upstream forks where DEFAULT_BASE_URL is empty).
  */
 
 import fs from 'node:fs';
@@ -19,8 +20,7 @@ import { configBaseUrl } from '../src/commands/config/base-url';
 import { resolveBaseUrl } from '../src/foundation/url';
 import { loadConfig } from '../src/foundation/config';
 import { configFilePath } from '../src/foundation/paths';
-import { ERROR_CODES, ENV } from '../src/constants';
-import { LwrError } from '../src/foundation/errors';
+import { ERROR_CODES, ENV, DEFAULT_BASE_URL } from '../src/constants';
 
 describe('config base-url command', () => {
   let fixture: FixtureHandle;
@@ -82,16 +82,15 @@ describe('resolveBaseUrl', () => {
     delete process.env[ENV.BASE_URL];
   });
 
-  it('throws CONFIG_BASE_URL_MISSING with the agent hint when every layer is empty', () => {
-    try {
-      resolveBaseUrl({});
-      expect.fail('should have thrown CONFIG_BASE_URL_MISSING');
-    } catch (err) {
-      expect(err).toBeInstanceOf(LwrError);
-      const lwrErr = err as LwrError;
-      expect(lwrErr.code).toBe(ERROR_CODES.CONFIG_BASE_URL_MISSING);
-      expect(lwrErr.hint).toMatch(/lwr config base-url/);
-    }
+  it('falls through to compile-time DEFAULT_BASE_URL when every dynamic layer is empty', () => {
+    // The Linways fork hardcodes DEFAULT_BASE_URL for zero-setup UX; when
+    // no flag / env / profile / configDefault is set, the resolution chain
+    // returns this constant instead of throwing CONFIG_BASE_URL_MISSING.
+    // On the brand-neutral upstream where DEFAULT_BASE_URL is empty, the
+    // same call would throw — that path is intentionally not exercised here.
+    expect(DEFAULT_BASE_URL).not.toBe('');
+    const url = resolveBaseUrl({});
+    expect(url).toBe(DEFAULT_BASE_URL);
   });
 
   it('prefers --base-url flag over every other layer', () => {

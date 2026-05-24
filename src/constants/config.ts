@@ -19,7 +19,7 @@
  *   →  config.defaultBaseUrl (runtime override)  →  DEFAULT_BASE_URL
  *   →  throws CONFIG_BASE_URL_MISSING
  */
-export const DEFAULT_BASE_URL = '';
+export const DEFAULT_BASE_URL = 'https://redmine.linways.com';
 
 // --- File system layout ----------------------------------------------------
 //
