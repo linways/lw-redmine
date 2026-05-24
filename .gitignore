@@ -1,0 +1,14 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+.env
+.env.local
+coverage/
+.vscode/
+.idea/
+*.tsbuildinfo
+.claude/
+CLAUDE.md
+PLAN.md
+FEEDBACK_SPEC.md
