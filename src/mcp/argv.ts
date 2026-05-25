@@ -57,6 +57,19 @@ export interface BuildArgvOptions {
   args: Record<string, unknown>;
   /** Always set; we never want a prompt from a spawned lwr. */
   forceJson?: boolean;
+  /**
+   * Root-program globals to also consider emitting (e.g. --dry-run,
+   * --profile, --base-url, --api-key, --debug). The MCP tool builder
+   * advertises these on every tool's input schema; the dispatcher passes
+   * the same filtered list here so anything the agent passed flows
+   * through to the spawned `lwr` argv.
+   *
+   * Same matching rules as `cmd.options`: keys in `args` are looked up by
+   * the option's camelCase form. Booleans become bare flags; valued options
+   * become `--long <val>`. Globals never accept arrays (none of them are
+   * repeatable today).
+   */
+  globals?: SerializedOption[];
 }
 
 /**
@@ -92,48 +105,64 @@ export function buildArgv(cmd: SerializedCommand, opts: BuildArgvOptions): strin
     }
   }
 
-  // 3. Options.
+  // 3. Options (command-specific).
   for (const opt of cmd.options) {
-    const key = optionKey(opt);
-    const val = opts.args[key];
-    if (val === undefined) continue;
-
-    // Boolean: bare flag.
-    if (opt.argName === undefined) {
-      // Negate option (`--no-color`): emit only when explicitly `false`.
-      if (opt.negate) {
-        if (val === false) out.push(opt.long);
-      } else {
-        if (val === true) out.push(opt.long);
-      }
-      continue;
-    }
-
-    if (Array.isArray(val)) {
-      // Only repeatable options accept arrays. Anything else would either
-      // silently overwrite (commander's last-wins behaviour) or smuggle
-      // extra flags into argv.
-      if (!opt.repeatable) {
-        throw new Error(
-          `Option ${opt.long} is not repeatable; pass a single string, not an array. ` +
-          `(Repeatable options accept arrays; this one does not.)`,
-        );
-      }
-      for (const item of val) {
-        out.push(opt.long, String(item));
-      }
-      continue;
-    }
-
-    out.push(opt.long, String(val));
+    emitOption(out, opt, opts.args);
   }
 
-  // 4. Always-on flags: JSON envelope + no prompts.
+  // 4. Globals (root-program flags merged onto MCP tools). Same emission
+  //    rules as cmd.options; command-specific options take precedence on
+  //    key collision because they were processed first (the for loop
+  //    above already pushed them, and emitOption only reads opts.args —
+  //    we do NOT skip the global if cmd.options consumed the same key,
+  //    but option-key collisions across cmd + globals are blocked at
+  //    schema-build time in tools.ts, so the agent can't even pass the
+  //    colliding key in `args`).
+  for (const g of opts.globals ?? []) {
+    emitOption(out, g, opts.args);
+  }
+
+  // 5. Always-on flags: JSON envelope + no prompts.
   if (opts.forceJson !== false) {
     out.push('--json', '--no-interactive');
   }
 
   return out;
+}
+
+function emitOption(out: string[], opt: SerializedOption, args: Record<string, unknown>): void {
+  const key = optionKey(opt);
+  const val = args[key];
+  if (val === undefined) return;
+
+  // Boolean: bare flag.
+  if (opt.argName === undefined) {
+    // Negate option (`--no-color`): emit only when explicitly `false`.
+    if (opt.negate) {
+      if (val === false) out.push(opt.long);
+    } else {
+      if (val === true) out.push(opt.long);
+    }
+    return;
+  }
+
+  if (Array.isArray(val)) {
+    // Only repeatable options accept arrays. Anything else would either
+    // silently overwrite (commander's last-wins behaviour) or smuggle
+    // extra flags into argv.
+    if (!opt.repeatable) {
+      throw new Error(
+        `Option ${opt.long} is not repeatable; pass a single string, not an array. ` +
+        `(Repeatable options accept arrays; this one does not.)`,
+      );
+    }
+    for (const item of val) {
+      out.push(opt.long, String(item));
+    }
+    return;
+  }
+
+  out.push(opt.long, String(val));
 }
 
 /**

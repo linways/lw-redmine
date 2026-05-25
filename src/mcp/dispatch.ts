@@ -24,7 +24,8 @@ import { randomUUID } from 'node:crypto';
 import type { Command } from 'commander';
 import { buildArgv, normaliseArgs, toolNameToPath } from './argv';
 import { buildPayload } from '../commands/commands';
-import type { SerializedCommand } from '../commands/commands';
+import type { SerializedCommand, SerializedOption } from '../commands/commands';
+import { pickAgentGlobals } from './tools';
 import { wrapUntrusted } from './sentinel';
 import { LwrError } from '../foundation/errors';
 import { jsonFailure } from '../foundation/output';
@@ -64,14 +65,17 @@ export interface DispatchOptions {
 }
 
 export async function dispatchTool(program: Command, opts: DispatchOptions): Promise<McpToolResult> {
-  const cmd = lookupCommand(program, opts.toolName);
-  if (!cmd) {
+  const lookup = lookupCommand(program, opts.toolName);
+  if (!lookup) {
     return errorEnvelope(opts.toolName, `Unknown tool: ${opts.toolName}`);
   }
 
   let argv: string[];
   try {
-    argv = buildArgv(cmd, { args: normaliseArgs(opts.args ?? {}) });
+    argv = buildArgv(lookup.cmd, {
+      args: normaliseArgs(opts.args ?? {}),
+      globals: lookup.agentGlobals,
+    });
   } catch (err) {
     return errorEnvelope(opts.toolName, err instanceof Error ? err.message : String(err));
   }
@@ -84,10 +88,16 @@ export async function dispatchTool(program: Command, opts: DispatchOptions): Pro
   });
 }
 
-function lookupCommand(program: Command, toolName: string): SerializedCommand | undefined {
+function lookupCommand(
+  program: Command,
+  toolName: string,
+): { cmd: SerializedCommand; agentGlobals: SerializedOption[] } | undefined {
   const path = toolNameToPath(toolName);
   const dotted = path.join('.');
-  return buildPayload(program).commands.find(c => c.name === dotted);
+  const payload = buildPayload(program);
+  const cmd = payload.commands.find(c => c.name === dotted);
+  if (!cmd) return undefined;
+  return { cmd, agentGlobals: pickAgentGlobals(payload.globals) };
 }
 
 interface SpawnArgs {
