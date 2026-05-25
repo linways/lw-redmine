@@ -12,15 +12,19 @@
  *   2. POST a time entry (default activity "Configurations") when
  *      --spent is provided. Omit to skip.
  *
- * No auto-pause: "Resolved" isn't in `DEV_ACTIVE_STATUS_NAMES`, so the
- * dev-active mutex doesn't fire here. The dev's previously-active issue
- * (if any) keeps ticking through the brief deploy — acceptable per the
- * "deploys are mostly real-time, single-digit minute interrupts" framing.
- * For longer "I forgot to log yesterday's dev hours" cases, use
- * `lwr time log --date YYYY-MM-DD` instead — it's purpose-built for backfill.
+ * Interrupt auto-pause: when the target ISN'T the active pointer AND the
+ * active pointer is currently in `DEV_ACTIVE_STATUS_NAMES`, lwr PUTs the
+ * active to "Paused" BEFORE the resolve. The active pointer stays SET so
+ * the dev resumes via `lwr issue use <prev-id>` + a status PUT to re-enter
+ * dev-active. Honors the systematic-logging rule: every work mutation on a
+ * non-active issue must pause the active one first (no transient-interrupt
+ * exceptions). For backfilling forgotten dev hours from a past day, use
+ * `lwr time log --date YYYY-MM-DD` — it's purpose-built for backfill and
+ * doesn't trigger the interrupt-pause.
  *
- * If the target IS the currently-active pointer, the pointer is unset
- * after the resolve — the dev just finished the thing they were on.
+ * If the target IS the currently-active pointer, the interrupt-pause is a
+ * no-op (you're finishing the thing you were on), and the pointer is unset
+ * after the resolve.
  *
  * Single-id per call (no bulk mode); the agent loops if pushing multiple
  * in a row.
@@ -35,6 +39,19 @@ import { createTimeEntry } from '../../api/time-entries';
 import { saveConfig, loadConfig } from '../../foundation/config';
 import { resolveProfileName } from '../../foundation/profiles';
 import { writeMeMarkdown } from '../../workflow/me';
+import {
+  pauseActivePointerIfDevActive,
+  previewInterruptPause,
+  type InterruptPauseResult,
+} from '../../workflow/auto-pause';
+import {
+  loadPreferences,
+  applyPreferences,
+  currentCfValuesFromIssue,
+  bumpTriggerCounts,
+  type AppliedDefault,
+} from '../../assistant/preferences';
+import { recordDecision } from '../../assistant/decisions';
 import { roundHours } from '../../foundation/numbers';
 import { writeLine } from '../../foundation/output';
 import { success, dim } from '../../foundation/format';
@@ -69,6 +86,13 @@ interface Payload {
   timeEntry: { id: number; hours: number; activity: string } | null;
   /** True iff this resolve also unset the active-issue pointer. */
   pointerCleared: boolean;
+  /**
+   * Interrupt-pause outcome: when the target wasn't the active pointer AND
+   * the active pointer was in DEV_ACTIVE, lwr paused it first. The agent
+   * uses `paused` to render "⏸ paused #X first" hints; `skipped` explains
+   * why no pause happened (no-active / same-issue / not-dev-active / etc).
+   */
+  interruptPause: InterruptPauseResult;
 }
 
 const cmd: CommandFn<Payload | DryRunPreview> = async (flags) => {
@@ -76,14 +100,21 @@ const cmd: CommandFn<Payload | DryRunPreview> = async (flags) => {
   const targetId = normaliseIssueId(f.id);
   const hoursRaw = f.spent !== undefined && f.spent !== 'none' ? parseDuration(f.spent) : null;
   const hours = hoursRaw !== null ? (roundHours(hoursRaw) ?? hoursRaw) : null;
+  const profileName = resolveProfileName(flags.profile);
 
   const session = await openSession(flags);
 
   // Dry-run: don't mutate. Run the resolution work and surface the planned
-  // PUT + POST as previews.
+  // PUT + POST + interrupt-pause as previews.
   if (flags.dryRun) {
-    return await previewResolve(session.client, targetId, hours, f);
+    return await previewResolve(session.client, targetId, hours, f, profileName);
   }
+
+  // Step 0: interrupt-pause. If the active pointer is on a different issue
+  // and that issue is currently in DEV_ACTIVE, PUT it → Paused first. Best-
+  // effort: a failure surfaces in `interruptPause.skipped='failed'` and the
+  // resolve proceeds.
+  const interruptPause = await pauseActivePointerIfDevActive(session.client, targetId, profileName);
 
   // Step 1: PUT the target to Resolved.
   const [issue, statuses] = await Promise.all([
@@ -96,13 +127,22 @@ const cmd: CommandFn<Payload | DryRunPreview> = async (flags) => {
   }
   const resolvedName = statuses.find(s => s.id === resolvedId)?.name ?? RESOLVED_STATUS_NAME;
 
+  // Apply cross-agent preferences. The verb itself doesn't accept --cf so
+  // userCfs is empty — only rules whose `when` matches the existing issue
+  // state can fire (e.g. "default Tester=Lakshmi when blank").
+  const { file: prefsFile, warnings: prefsWarnings } = loadPreferences();
+  const apply = applyPreferences(prefsFile.rules, {
+    userCfs: [],
+    currentCfValues: currentCfValuesFromIssue(issue.custom_fields),
+  });
+
   const previousStatus = issue.status.name;
   if (issue.status.id !== resolvedId) {
-    const updated = await updateIssue(session.client, targetId, {
+    await updateIssue(session.client, targetId, {
       statusId: resolvedId,
       notes: f.note,
+      ...(apply.customFields.length > 0 ? { customFields: apply.customFields } : {}),
     });
-    void updated;
   }
   // If the issue was already Resolved, the previous status equals the new
   // one — caller can detect this in the payload.
@@ -134,13 +174,28 @@ const cmd: CommandFn<Payload | DryRunPreview> = async (flags) => {
   // Step 3: if the resolved issue WAS the active pointer, clear it.
   const pointerCleared = maybeClearPointer(targetId, flags);
 
+  bumpTriggerCounts(apply.firedRuleIds);
+  recordDecision({
+    at: new Date().toISOString(),
+    cmd: 'issue.resolve',
+    resolvedCfs: [],
+    appliedDefaults: apply.applied,
+    issueId: targetId,
+  });
+
   return {
     json: {
       resolved: { id: targetId, previousStatus, newStatus: resolvedName },
       timeEntry,
       pointerCleared,
+      interruptPause,
     },
     pretty: ctx => {
+      if (interruptPause.paused) {
+        writeLine(dim(ctx, `⏸ paused #${interruptPause.paused.id} (${interruptPause.paused.previousStatus} → ${interruptPause.paused.newStatus}) before interrupt`));
+      } else if (interruptPause.skipped === 'failed' && interruptPause.failureReason) {
+        writeLine(dim(ctx, `⚠ could not auto-pause active pointer: ${interruptPause.failureReason}`));
+      }
       writeLine(success(ctx, `✓ #${targetId} → ${resolvedName}${previousStatus !== resolvedName ? ` (was ${previousStatus})` : ' (already resolved)'}`));
       if (timeEntry) {
         writeLine(dim(ctx, `  logged ${timeEntry.hours}h as ${timeEntry.activity}`));
@@ -148,9 +203,29 @@ const cmd: CommandFn<Payload | DryRunPreview> = async (flags) => {
       if (pointerCleared) {
         writeLine(dim(ctx, `  cleared active pointer (you're not working on this anymore)`));
       }
+      renderAppliedDefaults(ctx, apply.applied);
     },
+    meta: buildMeta(apply.applied, prefsWarnings),
   };
 };
+
+function buildMeta(
+  applied: AppliedDefault[],
+  warnings: { code: string; message: string }[],
+): Record<string, unknown> | undefined {
+  const meta: Record<string, unknown> = {};
+  if (applied.length > 0) meta.appliedDefaults = applied;
+  if (warnings.length > 0) meta.warnings = warnings.map(w => ({ code: w.code, message: w.message }));
+  return Object.keys(meta).length > 0 ? meta : undefined;
+}
+
+function renderAppliedDefaults(ctx: import('../../foundation/output').OutputContext, applied: AppliedDefault[]): void {
+  for (const a of applied) {
+    const cfLabel = a.cfName ? `${a.cfName} (cf ${a.cf})` : `cf ${a.cf}`;
+    const valueLabel = a.valueLabel ? `${a.valueLabel} (${a.value})` : String(a.value);
+    writeLine(dim(ctx, `  applied default: ${cfLabel} = ${valueLabel} — rule: ${a.rule}`));
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Pointer cleanup
@@ -181,7 +256,10 @@ async function previewResolve(
   targetId: number,
   hours: number | null,
   f: IssueResolveFlags,
+  profileName: string,
 ): Promise<CommandResult<DryRunPreview>> {
+  const interruptPausePreview = await previewInterruptPause(client, targetId, profileName);
+
   const [issue, statuses] = await Promise.all([
     getIssue(client, targetId, { allowedStatuses: true }),
     listStatuses(client),
@@ -191,6 +269,12 @@ async function previewResolve(
     assertTransitionAllowed(issue, resolvedId);
   }
   const resolvedName = statuses.find(s => s.id === resolvedId)?.name ?? RESOLVED_STATUS_NAME;
+
+  const { file: prefsFile, warnings: prefsWarnings } = loadPreferences();
+  const apply = applyPreferences(prefsFile.rules, {
+    userCfs: [],
+    currentCfValues: currentCfValuesFromIssue(issue.custom_fields),
+  });
 
   let activityPreview: { id: number; name: string } | null = null;
   if (hours !== null) {
@@ -206,6 +290,7 @@ async function previewResolve(
   const path = REDMINE_PATHS.ISSUE_BY_ID(targetId);
   const body: Record<string, unknown> = { status_id: resolvedId };
   if (f.note !== undefined) body.notes = f.note;
+  if (apply.customFields.length > 0) body.custom_fields = apply.customFields;
 
   const preview = dryRunPreview({
     method: 'PUT',
@@ -218,17 +303,23 @@ async function previewResolve(
       timeEntry: hours !== null
         ? { hours, activity: activityPreview }
         : null,
+      interruptPause: interruptPausePreview,
     },
     guards: ['workflow.allowed_transition'],
   });
   return {
     json: preview,
     pretty: ctx => {
+      if (interruptPausePreview.paused) {
+        writeLine(dim(ctx, `[dry-run] would PUT #${interruptPausePreview.paused.id} → ${interruptPausePreview.paused.newStatus} (interrupt-pause of active pointer)`));
+      }
       writeLine(dim(ctx, `[dry-run] would PUT ${path} — ${issue.status.name} → ${resolvedName}`));
       if (hours !== null) {
         writeLine(dim(ctx, `[dry-run] would POST ${REDMINE_PATHS.TIME_ENTRIES} — ${hours}h on #${targetId} (${activityPreview?.name ?? '?'})`));
       }
+      renderAppliedDefaults(ctx, apply.applied);
     },
+    meta: buildMeta(apply.applied, prefsWarnings),
   };
 }
 

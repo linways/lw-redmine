@@ -865,11 +865,12 @@ lwr issue resolve <id> --spent 10m --json
 ```
 
 What this does:
-1. PUTs `<id>` to "Resolved".
-2. POSTs a time entry (default activity "Configurations" — the closest fit at Linways since there's no "Deployment" activity). Omit `--spent` to skip the time entry.
-3. Clears the active pointer iff `<id>` was the pointer (you finished what you were on).
+1. **Interrupt-pause:** if the active pointer is on a different issue AND that issue is currently in `DEV_ACTIVE_STATUS_NAMES`, lwr PUTs it → "Paused" FIRST. The pointer stays SET so you can resume with `lwr issue use <prev-id>` afterwards. The response's `interruptPause` field tells the agent what happened (`paused: {...}` or `skipped: 'same-issue' | 'not-dev-active' | …`).
+2. PUTs `<id>` to "Resolved".
+3. POSTs a time entry (default activity "Configurations" — the closest fit at Linways since there's no "Deployment" activity). Omit `--spent` to skip the time entry.
+4. Clears the active pointer iff `<id>` was the pointer (you finished what you were on; interrupt-pause was a no-op).
 
-**No auto-pause:** "Resolved" isn't in `DEV_ACTIVE_STATUS_NAMES`, so the dev-active mutex doesn't fire here. Your previous active issue (if any) keeps ticking through the brief deploy — acceptable per "deploys are real-time, single-digit minute interrupts". If a future "Deployment in Progress" status is added to the workflow, transitioning through it would correctly fire the mutex sweep and give per-deploy time boundaries automatically.
+**Why the interrupt-pause:** the systematic-logging rule says any work mutation on a non-active issue must pause the active one first — otherwise the active's time entries silently absorb the deploy window. The active stays SET (not cleared) so the resume is one call: `lwr issue use <prev>` + an `issue status <prev> "Development in Progress"` PUT, which re-fires the mutex sweep normally.
 
 **`lwr issue resolve` has no `--date` flag — and intentionally so.** A resolve is a *real-time deploy action*: the status PUT is always "now" (Redmine doesn't backdate status changes), and deploys are typically 5–15 min logged at the moment they happen. If the user says "I forgot to log yesterday's work on this issue" (long-running dev work that crossed days, not a deploy), that's a different workflow — use `lwr time log <id> --hours <N> --date <YYYY-MM-DD> --activity <name>`, which is purpose-built for backfilling.
 
@@ -878,13 +879,16 @@ The agent picks `--spent` from conversation cues (deploy mentioned 10 min ago �
 Single-id per call (no bulk). For a run of resolves:
 ```
 lwr issue resolve 125358 --spent 10m --json
+# → interruptPause.paused = {id: <prev>, ...} on the first call
+# → interruptPause.skipped = 'not-dev-active' on subsequent calls
 lwr issue resolve 125724 --spent 15m --json
-# Pointer still points at the originally-active issue (now Paused).
+# Pointer still points at the originally-active issue (now Paused on Redmine).
 # Ask user: "back to #<original-id>?" → on confirm:
 lwr issue status <original-id> "Development in Progress" --json
+# That status PUT re-fires the dev-active mutex sweep normally.
 ```
 
-Use `--dry-run` to preview the PUT + POST without committing.
+Use `--dry-run` to preview the interrupt-pause + resolve PUT + time POST without committing.
 
 ### "What's on my plate?" / "My issues" / "My work"
 
