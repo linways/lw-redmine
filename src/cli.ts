@@ -300,14 +300,14 @@ function build(): Command {
 
   issue
     .command('use <id>')
-    .description('Set the active profile\'s sticky issue. Auto-pauses the previously-active issue on Redmine AND closes its local session, keeping the mutex honest.')
+    .description('Use when the user picks a new issue to focus on. Sets the local active-issue pointer (the sticky "what am I on" marker that `lwr current`, `lwr home`, and `me.md` read). Pointer-only — no Redmine status change. To actually start work, follow with `lwr issue status <id> "Development in Progress"`; that PUT fires the dev-active mutex sweep and pauses any other in-progress issue.')
     .action(async function (this: Command, id: string) {
       await issueUse.useIssue({ ...pickGlobals(this), issue: id });
     });
 
   issue
     .command('current')
-    .description('Show the active issue. Reconciles the local sticky pointer with the live Redmine dev-active set (auto-clears if terminal, surfaces conflicts/discoveries). Discovery cached for 60s in-process.')
+    .description('Use when the user asks "what am I on?" / "what\'s my current issue?". Reads the local sticky pointer, reconciles against the live Redmine dev-active set (auto-clears if terminal, surfaces conflicts/discoveries). Discovery cached for 60s in-process. For raw Redmine truth (no local pointer), use `lwr issue active`.')
     .option('--no-cache', 'Force a fresh dev-active discovery query, bypassing the 60s in-process cache.')
     .action(async function (this: Command) {
       const opts = this.opts<{ cache?: boolean }>();
@@ -317,14 +317,14 @@ function build(): Command {
 
   issue
     .command('active')
-    .description('Show the live active issue (Redmine status = "Development in Progress" with Developer cf = me; "Dev Analysis required" is a queue state, not active). Flags >1 row as an invariant violation.')
+    .description('Use when the user wants raw Redmine truth ("what\'s actually In-Progress for me right now?"), bypassing the local pointer. Queries DEV_ACTIVE_STATUS_NAMES with Developer cf = me; >1 row signals a mutex violation. For the local-pointer + reconciliation view, use `lwr issue current`.')
     .action(async function (this: Command) {
       await issueActive.activeIssue({ ...pickGlobals(this) });
     });
 
   issue
     .command('resolve <id>')
-    .description('Mark an issue as Resolved (= deployed to production). Auto-pauses the current active issue first (per the systematic logging rule). Optionally logs a real-time deploy entry with --spent. For backfilling forgotten dev hours from a past day, use `lwr time log --date` instead.')
+    .description('Use when an issue is deployed to production ("I deployed #X" / "push #X live"). Auto-pauses the active pointer first when it\'s a different issue (interrupt rule), PUTs target → Resolved, optionally POSTs a deploy time entry with --spent. For backfilling forgotten dev hours from a past day, use `lwr time log --date` (which does NOT fire the interrupt-pause).')
     .option('--spent <duration>', 'Time spent on the deploy, today (e.g. 5m, 10m, 15m, 1h, 1h30m, 0.25). Omit to skip the time entry.')
     .option('--activity <name>', 'Override the default time-entry activity ("Configurations").')
     .option('--note <text>', 'Resolve comment, appears in the Redmine journal and the time entry.')
@@ -335,7 +335,7 @@ function build(): Command {
 
   issue
     .command('handover [id]')
-    .description('Resolve a daily-rollover signal: backfill the time entry from the last action-log timestamp through --stopped, then pause (default) / resolve / resume. `--dismiss` clears today\'s rollover warning without backfilling.')
+    .description('Use when reconciling a daily-rollover signal — "you didn\'t pause last night; lwr left the issue in a dev-active status". Backfills a time entry from the last action-log timestamp through --stopped, then pauses (default) / resolves / resumes. `--dismiss` clears today\'s rollover warning without backfilling.')
     .option('--stopped <time>', 'When work actually ended. HH:MM (combined with the date of last activity) or full ISO. Required unless --dismiss.')
     .option('--mode <pause|resolve|resume>', 'What to do after backfill (default: pause).')
     .option('--note <text>', 'Comment for the time entry; defaults to an auto-generated handover note.')
@@ -347,7 +347,7 @@ function build(): Command {
 
   issue
     .command('clear')
-    .description('Close the active session and unset the active issue')
+    .description('Use when the user is dropping focus without a Redmine status change ("forget what I was on" / "I\'m done for today, don\'t resume this"). Unsets the local active-issue pointer. Does NOT change Redmine — for actual status changes, use `lwr issue pause` (keeps pointer, sets status) or `lwr issue status` (full transition).')
     .action(async function (this: Command) {
       await issueClear.clearIssue({ ...pickGlobals(this) });
     });
@@ -364,9 +364,9 @@ function build(): Command {
 
   issue
     .command('pause')
-    .description('Pause work on the active issue — closes the local session AND (with --status) updates the Redmine status in one call. Active issue stays set, unlike `clear`.')
-    .option('--status <name>', 'Redmine status to set at pause (e.g. "Paused"). Resolves against the cached statuses dict + the issue\'s allowed_statuses guard. Omit to pause locally only.')
-    .option('--note <text>', 'Optional one-line note appended to the session as it closes')
+    .description('Use when the user is stopping work on the active issue ("pausing for the day" / "taking a break"). PUTs the active issue to --status (default "Paused") and re-syncs the local pointer\'s status snapshot, keeping the pointer SET so `lwr issue use <same-id>` resumes cleanly later. Unlike `clear`, the pointer survives.')
+    .option('--status <name>', 'Redmine status to set at pause (default "Paused"). Resolves against the cached statuses dict + the issue\'s allowed_statuses guard. Pass a different transition to bounce (e.g. tester sending issue back: --status "Need More Information").')
+    .option('--note <text>', 'Optional one-line note appended as a Redmine journal comment on the pause PUT')
     .action(async function (this: Command) {
       const opts = this.opts<{ status?: string; note?: string }>();
       await issuePause.pauseIssue({ ...pickGlobals(this), ...opts });
