@@ -506,6 +506,7 @@ function build(): Command {
     .description('Set issue status by name or numeric id')
     .option('--note <text>', 'Add a note alongside the status change')
     .option('--private', 'Mark the note as private')
+    .option('--force', 'Bypass the required-CF block')
     .action(async function (this: Command, id: string, status: string) {
       const opts = this.opts<Record<string, unknown>>();
       await issueVerbs.statusVerb({ ...pickGlobals(this), id, status, ...opts });
@@ -517,6 +518,7 @@ function build(): Command {
     .option('--as <name>', 'Pick a specific closed status (e.g., "Rejected")')
     .option('--note <text>', 'Add a closing note')
     .option('--private', 'Mark the note as private')
+    .option('--force', 'Bypass the required-CF block')
     .action(async function (this: Command, id: string) {
       const opts = this.opts<Record<string, unknown>>();
       await issueVerbs.closeVerb({ ...pickGlobals(this), id, ...opts });

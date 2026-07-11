@@ -41,12 +41,17 @@ export const ASSISTANT_EVENT_FILES = {
  * Filenames inside `~/.lwr/facts/`. Each is canonical JSON, source of
  * truth for the assistant's "what it has learned / been told". Bounded
  * size — the assistant never writes Redmine-derived state here.
+ *
+ * Implemented today: PREFERENCES (cross-agent default injection) and
+ * REQUIRED_CFS (required-CF guard on status/close). The rest are reserved.
  */
 export const ASSISTANT_FACT_FILES = {
   /** Team lead's mental model of who knows what. */
   TEAM_KNOWLEDGE: 'team-knowledge.json',
   /** Inferred user preferences (defaults, disambiguators). */
   PREFERENCES: 'preferences.json',
+  /** Locally-declared "required CFs per target status" map (guard on status/close). */
+  REQUIRED_CFS: 'required-cfs.json',
   /** Inferred org-workflow rules. */
   ORG_PATTERNS: 'org-patterns.json',
   /** Communication patterns (templates, frequent stakeholders). */
