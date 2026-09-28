@@ -24,6 +24,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 export const SKILL_FILE_NAME = 'SKILL.md';
+export const MUSE_FILE_NAME = 'MUSE.md';
 export const RECIPES_DIR_NAME = 'recipes';
 export const SKILL_NAME = 'lw-redmine';
 

@@ -217,3 +217,60 @@ describe('applyUpdateSkill — directory-aware snapshot + symlink', () => {
     expect(fs.readdirSync(claudeRecipes).sort()).toEqual(['time-tracking.md', 'work-log.md']);
   });
 });
+
+describe('applyUpdateSkill — MUSE.md mirroring', () => {
+  let sb: Sandbox;
+
+  beforeEach(() => {
+    sb = makeSandbox();
+  });
+
+  afterEach(() => {
+    fs.rmSync(sb.root, { recursive: true, force: true });
+  });
+
+  it('mirrors MUSE.md into the canonical dir when the repo ships one', () => {
+    fs.writeFileSync(path.join(sb.repoRoot, 'MUSE.md'), '# fake MUSE\n');
+
+    const result = applyUpdateSkill({
+      repoSkill: path.join(sb.repoRoot, 'SKILL.md'),
+      configRoot: sb.configRoot,
+      homeRoot: sb.homeRoot,
+      toolRels: sb.tools,
+    });
+
+    // SKILL.md points agents at ~/.lwr/skill/MUSE.md, so the file has to
+    // land there on the CLI refresh path too — not only via install.mjs.
+    const canonicalMuse = path.join(sb.configRoot, 'skill', 'MUSE.md');
+    expect(result.museCanonical).toBe(canonicalMuse);
+    expect(fs.readFileSync(canonicalMuse, 'utf8')).toBe('# fake MUSE\n');
+  });
+
+  it('skips MUSE.md when the repo does not ship one', () => {
+    const result = applyUpdateSkill({
+      repoSkill: path.join(sb.repoRoot, 'SKILL.md'),
+      configRoot: sb.configRoot,
+      homeRoot: sb.homeRoot,
+      toolRels: sb.tools,
+    });
+
+    expect(result.museCanonical).toBeUndefined();
+    expect(fs.existsSync(path.join(sb.configRoot, 'skill', 'MUSE.md'))).toBe(false);
+  });
+
+  it('re-snapshots an edited MUSE.md', () => {
+    const repoMuse = path.join(sb.repoRoot, 'MUSE.md');
+    fs.writeFileSync(repoMuse, '# v1\n');
+    const opts = {
+      repoSkill: path.join(sb.repoRoot, 'SKILL.md'),
+      configRoot: sb.configRoot,
+      homeRoot: sb.homeRoot,
+      toolRels: sb.tools,
+    };
+    applyUpdateSkill(opts);
+    fs.writeFileSync(repoMuse, '# v2\n');
+    applyUpdateSkill(opts);
+
+    expect(fs.readFileSync(path.join(sb.configRoot, 'skill', 'MUSE.md'), 'utf8')).toBe('# v2\n');
+  });
+});

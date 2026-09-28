@@ -1,16 +1,16 @@
 /**
  * `lwr update-skill`
  *
- * Refreshes the SKILL.md and `recipes/` bundle the agents read. Cheap,
- * idempotent, no git/npm/build — the typical "you edited SKILL.md,
+ * Refreshes the SKILL.md, MUSE.md, and `recipes/` bundle the agents read.
+ * Cheap, idempotent, no git/npm/build — the typical "you edited SKILL.md,
  * propagate it" path.
  *
  * Architecture (mirrors install.mjs):
  *
- *   <repo>/SKILL.md            <repo>/recipes/*.md
- *        │ (copy)                    │ (recursive copy)
- *        ▼                            ▼
- *   ~/.lwr/skill/SKILL.md   ~/.lwr/skill/recipes/  ← canonical snapshot
+ *   <repo>/{SKILL.md, MUSE.md}       <repo>/recipes/*.md
+ *        │ (copy)                          │ (recursive copy)
+ *        ▼                                  ▼
+ *   ~/.lwr/skill/{SKILL.md, MUSE.md}  ~/.lwr/skill/recipes/  ← canonical snapshot
  *        ▲                            ▲
  *        │ (file symlink)             │ (directory symlink)
  *        │                            │
@@ -37,6 +37,7 @@ import { ERROR_CODES, EXIT, ME_FILE } from '../constants';
 import { configDir } from '../foundation/paths';
 import {
   AI_TOOL_SKILL_RELS,
+  MUSE_FILE_NAME,
   RECIPES_DIR_NAME,
   SKILL_FILE_NAME,
   SKILL_NAME,
@@ -47,6 +48,8 @@ import {
 interface UpdateSkillPayload {
   source: string;
   canonical: string;
+  /** Canonical MUSE.md, present when the repo ships one. */
+  museCanonical?: string;
   /** Canonical recipes/ directory, present when the repo ships recipes. */
   recipesCanonical?: string;
   /** Number of recipe files mirrored into the canonical snapshot. */
@@ -77,6 +80,7 @@ export interface ApplyUpdateSkillOpts {
 export interface ApplyUpdateSkillResult {
   source: string;
   canonical: string;
+  museCanonical?: string;
   recipesCanonical?: string;
   recipesCount?: number;
   symlinks: SymlinkRecord[];
@@ -87,14 +91,23 @@ export function applyUpdateSkill(opts: ApplyUpdateSkillOpts): ApplyUpdateSkillRe
   const tools = opts.toolRels ?? AI_TOOL_SKILL_RELS;
 
   const repoRoot = path.dirname(repoSkill);
+  const repoMuse = path.join(repoRoot, MUSE_FILE_NAME);
   const repoRecipes = path.join(repoRoot, RECIPES_DIR_NAME);
+  const hasMuse = fs.existsSync(repoMuse) && fs.statSync(repoMuse).isFile();
   const hasRecipes = fs.existsSync(repoRecipes) && fs.statSync(repoRecipes).isDirectory();
 
   const skillDir = path.join(configRoot, 'skill');
   const canonical = path.join(skillDir, SKILL_FILE_NAME);
+  const museCanonical = path.join(skillDir, MUSE_FILE_NAME);
   const recipesCanonical = path.join(skillDir, RECIPES_DIR_NAME);
   fs.mkdirSync(skillDir, { recursive: true });
   fs.copyFileSync(repoSkill, canonical);
+  // MUSE.md rides along so SKILL.md's "read MUSE.md" pointer resolves for an
+  // agent that loaded the skill from its tool's folder and has no idea where
+  // the repo lives. Mirrors install.mjs refreshCanonicalSkill().
+  if (hasMuse) {
+    fs.copyFileSync(repoMuse, museCanonical);
+  }
 
   let recipesCount = 0;
   if (hasRecipes) {
@@ -123,6 +136,9 @@ export function applyUpdateSkill(opts: ApplyUpdateSkillOpts): ApplyUpdateSkillRe
   }
 
   const result: ApplyUpdateSkillResult = { source: repoSkill, canonical, symlinks };
+  if (hasMuse) {
+    result.museCanonical = museCanonical;
+  }
   if (hasRecipes) {
     result.recipesCanonical = recipesCanonical;
     result.recipesCount = recipesCount;
@@ -149,12 +165,16 @@ const cmd: CommandFn<UpdateSkillPayload> = async (): Promise<CommandResult<Updat
 
   void ME_FILE; // me.md sits next to skill/; touching it isn't this command's job
 
+  const hasMuse = result.museCanonical !== undefined;
   const hasRecipes = result.recipesCanonical !== undefined;
   return {
     json: result,
     pretty: c => {
       writeLine(success(c, `Skill snapshot refreshed: ${result.canonical}`));
       writeLine(`  ${dim(c, 'source:')} ${result.source}`);
+      if (hasMuse) {
+        writeLine(`  ${dim(c, 'guide:')} ${result.museCanonical}`);
+      }
       if (hasRecipes) {
         const n = result.recipesCount ?? 0;
         writeLine(`  ${dim(c, 'recipes:')} ${result.recipesCanonical} ${dim(c, `(${n} file${n === 1 ? '' : 's'})`)}`);
