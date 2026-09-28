@@ -5,6 +5,35 @@ All notable changes to **lwr** are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`$LWR_API_KEY_COMMAND` auth backend** — a command that prints the API key on
+  stdout, run once per invocation and never persisted. Covers every secret
+  broker (1Password, `pass`, Vault, Muse/Jarvis authd surrogates) without
+  per-vendor code, and makes `lwr` usable on hosts where no static key can be
+  planted. Slots between `$LWR_API_KEY` and the keychain. New error code
+  `AUTH_KEY_COMMAND_FAILED`; 10s timeout keeps the never-hang contract.
+- **Muse skill host** — `install.mjs` now mirrors the skill bundle into
+  `~/workspace/skills/lw-redmine` when that directory exists.
+
+### Changed
+
+- **`keytar` is an optional dependency.** Its native build fails on restricted
+  machines (no toolchain, no libsecret, non-root npm prefix) and used to abort
+  the whole install, even though the file fallback would have worked. Install
+  now retries with `--ignore-scripts` and warns instead of dying.
+- **`npm link` failure no longer aborts the install.** It falls back to a
+  `~/.local/bin/lwr` wrapper — agents can't `sudo`, and a good build shouldn't
+  be discarded over a link step.
+- **`lwr doctor`** reports the real key source (`flag` / `env` / `command` /
+  `keychain` / `file`) instead of guessing `keychain or file`, and skips the
+  keychain check entirely on a broker-managed install.
+- **`lwr auth login`** stores nothing when `$LWR_API_KEY_COMMAND` is set — it
+  builds the profile and reports `storage: none`. Previously it would have
+  written a short-lived surrogate to the keychain or `auth.json`.
+
 ## [0.1.0] — 2026-05-24
 
 Initial public release.

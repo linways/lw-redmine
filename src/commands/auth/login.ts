@@ -16,7 +16,7 @@
  */
 
 import { ENV, ERROR_CODES } from '../../constants';
-import { setApiKey } from '../../foundation/auth';
+import { getApiKey, keyCommand, setApiKey } from '../../foundation/auth';
 import { createClient } from '../../foundation/client';
 import {
   loadConfig,
@@ -60,7 +60,8 @@ export interface LoginFlags extends GlobalFlags {
 interface LoginPayload {
   profile: string;
   baseUrl: string;
-  storage: 'keychain' | 'file';
+  /** `command` = nothing was written; the key re-resolves per invocation. */
+  storage: 'keychain' | 'file' | 'command';
   method: 'api-key' | 'password';
   user: { id: number; login?: string; mail?: string };
   me: {
@@ -119,7 +120,7 @@ const cmd: CommandFn<LoginPayload> = async (flags, ctx): Promise<CommandResult<L
     configDefaultBaseUrl: cfg.defaultBaseUrl,
   });
 
-  const { apiKey, user, method } = await resolveCredentials(flgs, ctx, baseUrl);
+  const { apiKey, user, method } = await resolveCredentials(flgs, ctx, baseUrl, profileName);
   const client = createClient({ baseUrl, apiKey });
 
   // Step 1: verify key + fetch the current user with their full membership
@@ -180,7 +181,16 @@ const cmd: CommandFn<LoginPayload> = async (flags, ctx): Promise<CommandResult<L
       identifierFor,
     }));
 
-  const storage = await setApiKey({ profile: profileName, apiKey });
+  // Broker-managed installs must not persist: the key resolved through
+  // $LWR_API_KEY_COMMAND may be a short-lived surrogate, and writing it
+  // to the keychain or ~/.lwr/auth.json both leaks it to disk and pins a
+  // token that expires. `login` still builds the profile — that's the
+  // part that's actually worth doing — and every later call re-resolves
+  // the key through the broker.
+  const brokerCmd = keyCommand();
+  const storage: 'keychain' | 'file' | 'command' = brokerCmd
+    ? 'command'
+    : await setApiKey({ profile: profileName, apiKey });
 
   // Atomic save: profile + activeProfile pointer in one write.
   const profile: Profile = { baseUrl, activeProject, me };
@@ -219,7 +229,11 @@ const cmd: CommandFn<LoginPayload> = async (flags, ctx): Promise<CommandResult<L
       writeLine(success(c, `Logged in as ${who} (${method})`));
       writeLine(`  profile: ${profileName}`);
       writeLine(`  baseUrl: ${baseUrl}`);
-      writeLine(`  storage: ${storage}`);
+      writeLine(
+        storage === 'command'
+          ? '  storage: none — key resolves via $LWR_API_KEY_COMMAND per call'
+          : `  storage: ${storage}`,
+      );
       const roleSummary = me.roles
         .map(r => {
           const cf = me.fieldMap[r];
@@ -260,12 +274,15 @@ async function resolveCredentials(
   flgs: LoginFlags,
   ctx: Parameters<CommandFn<unknown>>[1],
   baseUrl: string,
+  profileName: string,
 ): Promise<ResolvedCreds> {
   const envApiKey = process.env[ENV.API_KEY];
 
-  // 1. Explicit api-key path
-  if (flgs.apiKey || envApiKey) {
-    const apiKey = (flgs.apiKey ?? envApiKey) as string;
+  // 1. Explicit api-key path. Includes the broker: with
+  // $LWR_API_KEY_COMMAND set, `login` needs no credentials passed in at
+  // all — it resolves one, verifies it, builds the profile, stores nothing.
+  if (flgs.apiKey || envApiKey || keyCommand()) {
+    const apiKey = flgs.apiKey ?? envApiKey ?? (await getApiKey(profileName));
     return { apiKey, user: { id: 0 }, method: 'api-key' };
   }
 

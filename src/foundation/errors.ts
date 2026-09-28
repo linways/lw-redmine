@@ -51,6 +51,17 @@ export class AuthError extends LwrError {
   }
 }
 
+/**
+ * $LWR_API_KEY_COMMAND exited non-zero, timed out, or printed nothing.
+ * Deliberately carries no output from the command: its stdout is a
+ * credential and its stderr may quote one.
+ */
+export class AuthKeyCommandError extends LwrError {
+  constructor(message: string, hint?: string, cause?: unknown) {
+    super({ message, code: ERROR_CODES.AUTH_KEY_COMMAND_FAILED, exit: EXIT.AUTH, hint, cause });
+  }
+}
+
 export class AuthMissingError extends LwrError {
   constructor(hint = 'Run `lwr auth login` to set an API key.', cause?: unknown) {
     super({

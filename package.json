@@ -1,7 +1,7 @@
 {
   "name": "@linways/lw-redmine",
   "version": "0.1.0",
-  "description": "lwr — Redmine CLI for AI agents",
+  "description": "lwr \u2014 Redmine CLI for AI agents",
   "author": "Sibin C Baby <sibin@linways.com>",
   "homepage": "https://github.com/linways/lw-redmine#readme",
   "repository": {
@@ -56,10 +56,12 @@
     "boxen": "^7.1.1",
     "cli-table3": "^0.6.5",
     "commander": "^12.1.0",
-    "keytar": "^7.9.0",
     "ora": "^7.0.1",
     "picocolors": "^1.1.0",
     "zod": "^3.23.0"
+  },
+  "optionalDependencies": {
+    "keytar": "^7.9.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",

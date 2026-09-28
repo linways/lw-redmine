@@ -25,12 +25,11 @@ import path from 'node:path';
 
 import {
   CONVERTER_BIN,
-  ENV,
   EXIT,
   KEYTAR_SERVICE,
 } from '../../constants';
 import { getCurrentUser } from '../../api/users';
-import { isKeychainAvailable } from '../../foundation/auth';
+import { isKeychainAvailable, keyCommand, resolveApiKey } from '../../foundation/auth';
 import { createClient } from '../../foundation/client';
 import { loadConfig } from '../../foundation/config';
 import {
@@ -45,7 +44,6 @@ import { configDir } from '../../foundation/paths';
 import { activeProfile } from '../../foundation/profiles';
 import { resolveBaseUrlFromProfile } from '../../foundation/url';
 import { runCommand, type CommandFn, type CommandResult, type GlobalFlags } from '../../foundation/run';
-import { getApiKey } from '../../foundation/auth';
 import { SYMBOLS } from '../../constants';
 import type { OutputContext } from '../../foundation/output';
 import pc from 'picocolors';
@@ -269,6 +267,20 @@ function resolveProfile(flags: GlobalFlags): { name: string; baseUrl: string } |
 // ---------------------------------------------------------------------------
 
 async function checkKeychain(): Promise<CheckResult> {
+  // A broker-managed install never stores a key anywhere, so a missing
+  // OS keychain is irrelevant, not a warning. Headless agent machines
+  // are exactly where libsecret is absent — don't nag them about it.
+  const cmd = keyCommand();
+  if (cmd) {
+    return {
+      name: 'auth.keychain',
+      category: 'Auth',
+      status: 'skip',
+      message: 'Not used — key comes from $LWR_API_KEY_COMMAND, never stored',
+      details: { service: KEYTAR_SERVICE, used: false },
+    };
+  }
+
   const ok = await isKeychainAvailable();
   return {
     name: 'auth.keychain',
@@ -287,8 +299,7 @@ async function resolveApiKeyForCheck(
   flagApiKey?: string,
 ): Promise<{ check: CheckResult; apiKey: string | null }> {
   try {
-    const apiKey = await getApiKey(profile, flagApiKey);
-    const source = sourceOfApiKey(flagApiKey, apiKey);
+    const { apiKey, source } = await resolveApiKey(profile, flagApiKey);
     return {
       apiKey,
       check: {
@@ -308,7 +319,7 @@ async function resolveApiKeyForCheck(
           category: 'Auth',
           status: 'fail',
           message: 'No API key found',
-          hint: 'Run `lwr auth login` (username + password) or set $LWR_API_KEY.',
+              hint: 'Run `lwr auth login` (username + password), or set $LWR_API_KEY / $LWR_API_KEY_COMMAND.',
           details: { profile },
         },
       };
@@ -331,13 +342,6 @@ async function resolveApiKeyForCheck(
 function redactKey(key: string): string {
   if (key.length <= 8) return '****';
   return `****${key.slice(-4)}`;
-}
-
-function sourceOfApiKey(flagApiKey: string | undefined, resolved: string): string {
-  if (flagApiKey && flagApiKey === resolved) return 'flag';
-  if (process.env[ENV.API_KEY] && process.env[ENV.API_KEY] === resolved) return 'env';
-  // We can't tell keychain vs file from outside auth.ts without another probe.
-  return 'keychain or file';
 }
 
 // ---------------------------------------------------------------------------
