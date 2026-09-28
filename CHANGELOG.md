@@ -23,7 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`keytar` is an optional dependency.** Its native build fails on restricted
   machines (no toolchain, no libsecret, non-root npm prefix) and used to abort
   the whole install, even though the file fallback would have worked. Install
-  now retries with `--ignore-scripts` and warns instead of dying.
+  now retries with `--ignore-scripts` and warns instead of dying. Ships with an ambient
+  `src/keytar.d.ts` so `tsc` still resolves the lazy import when the package
+  is absent — otherwise the build fails with TS2307 on exactly those machines.
 - **`npm link` failure no longer aborts the install.** It falls back to a
   `~/.local/bin/lwr` wrapper — agents can't `sudo`, and a good build shouldn't
   be discarded over a link step.
