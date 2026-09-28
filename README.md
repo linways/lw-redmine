@@ -109,6 +109,49 @@ node install.mjs install
 
 After install completes, run `lwr auth login` to wire up the Redmine profile.
 
+### Muse
+
+**For the human — one line is enough:**
+
+> Install and set up lw-redmine from https://github.com/linways/lw-redmine
+
+**For the agent (Muse reading this):**
+
+1. **Clone and install.** `node install.mjs install` handles dependencies
+   (`keytar` is optional — a failed native build no longer aborts the install),
+   the build, the binary (falls back to `~/.local/bin/lwr` when `npm link`
+   can't write the global prefix), and the skill, which is auto-detected for
+   Muse at `~/workspace/skills/lw-redmine`.
+2. **Base URL.** Ask the user for their Redmine URL — it is not sensitive — then
+   run `lwr config base-url <url>` yourself.
+3. **Secure auth — never ask for the API key in chat.** Create a custom
+   connector in the Secure Vault for the user's Redmine host, registered with
+   placement `custom header: X-Redmine-API-Key`, and give the user the secure
+   link. They paste the key there (Redmine → My account → API access key →
+   Show). The real key must never appear in chat, in a file, or in shell
+   history.
+4. **Wire the broker.** Set `LWR_API_KEY_COMMAND` to a command that prints a
+   short-lived credential for that connector on stdout (see
+   **Secret broker — `$LWR_API_KEY_COMMAND`** under First-run login). It runs
+   once per invocation and is never persisted, so a surrogate that expires is
+   fine.
+5. **Then log in once.** With the broker wired, run `lwr auth login`. It
+   resolves the key through the broker, stores nothing (`storage: none`), and
+   builds the profile — identity, roles, custom-field bindings, project
+   memberships, `~/.lwr/me.md`. This step is not optional: without it there is
+   no identity context for "my issues" to mean anything.
+6. **Verify.** `lwr auth whoami` prints the user; `lwr doctor` shows
+   `auth.apiKey → source: command` and skips the keychain check.
+
+**Order matters.** Steps 3–4 come before step 5. Running `lwr auth login`
+*before* the broker is wired falls back to prompting for a credential, and on a
+non-TTY host that means either a `VALIDATION_MISSING_FLAG` error or — worse, if
+you work around it with `--api-key` / `--password` — a static key routed
+through the conversation and written to `~/.lwr/auth.json`. Never pass those
+flags. If the broker is down, commands fail with `AUTH_KEY_COMMAND_FAILED`:
+report the hint verbatim and stop, rather than reaching for another credential
+path.
+
 ### MCP setup (Cursor / Cline / Zed / generic MCP clients)
 
 `lwr` doubles as an [MCP](https://modelcontextprotocol.io) server. Any agent that speaks MCP can connect to it over stdio — no shell access required, no SKILL.md loading, no Claude-Code-specific setup.
@@ -150,7 +193,7 @@ What the agent gets:
 
 ### For unsupported AI hosts
 
-If your host isn't one of the four auto-detected tools (Kilo, Continue, future tools), self-bootstrap with:
+If your host isn't one of the five auto-detected tools (Kilo, Continue, future tools), self-bootstrap with:
 
 ```bash
 lwr skill-paths --json                                   # discover where the canonical skill lives
