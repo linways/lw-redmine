@@ -115,7 +115,9 @@ After install completes, run `lwr auth login` to wire up the Redmine profile.
 
 > Install and set up lw-redmine from https://github.com/linways/lw-redmine
 
-**For the agent (Muse reading this):**
+**For the agent (Muse reading this):** full agent guide, including the rules on
+how the credential may and may not be obtained: [`MUSE.md`](MUSE.md). Read it
+before authenticating.
 
 1. **Clone and install.** `node install.mjs install` handles dependencies
    (`keytar` is optional — a failed native build no longer aborts the install),

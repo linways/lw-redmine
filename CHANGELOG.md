@@ -17,6 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `AUTH_KEY_COMMAND_FAILED`; 10s timeout keeps the never-hang contract.
 - **Muse skill host** — `install.mjs` now mirrors the skill bundle into
   `~/workspace/skills/lw-redmine` when that directory exists.
+- **`MUSE.md`** — agent guide for Muse hosts, whose one rule is that the agent
+  must never obtain the user's API key itself (no browser, no chat, no file);
+  the only path is a Secure Vault connector plus the `$LWR_API_KEY_COMMAND`
+  broker. Mirrored to `~/.lwr/skill/MUSE.md` alongside the canonical SKILL.md,
+  referenced from SKILL.md's auth section and the README, and printed by
+  `install.mjs` when Muse is the detected host — a doc only guides if it gets
+  opened, and installer stdout is the one place an agent reliably reads.
 
 ### Changed
 
