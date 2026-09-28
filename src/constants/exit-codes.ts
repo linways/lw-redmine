@@ -64,6 +64,16 @@ export const ERROR_CODES = {
    */
   WORKFLOW_NOT_ALLOWED: 'WORKFLOW_NOT_ALLOWED',
   /**
+   * A locally-declared "required CFs per target status" rule
+   * (`~/.lwr/facts/required-cfs.json`, mode "block") was violated: the
+   * target status needs one or more CFs that are empty on the issue and
+   * not injected by prefs. `details.missing` is `[{cf, name}]` so the
+   * agent can set them (`lwr issue edit <id> --cf <id>=<val>`) and retry,
+   * or re-run with `--force`. Redmine has no API for required-field
+   * metadata (admin-only), so this guard is purely local.
+   */
+  MISSING_REQUIRED_CF: 'MISSING_REQUIRED_CF',
+  /**
    * No user matched the provided login / name in the searched scope
    * (project members, /users.json, or manual fallback list). `details`
    * names the scope that was searched so agents can widen the next attempt.
@@ -136,6 +146,16 @@ export const ERROR_CODES = {
    * wrote it, so the user can spot a misbehaving agent without git-archaeology.
    */
   PREFERENCES_AGENT_REQUIRED: 'PREFERENCES_AGENT_REQUIRED',
+
+  // Required-CF guard (~/.lwr/facts/required-cfs.json)
+  /**
+   * The required-CFs file EXISTS but couldn't be read, isn't valid JSON,
+   * or failed schema validation. Non-fatal: the guard is skipped and this
+   * code surfaces in `meta.warnings[]` + stderr, so a typo (e.g.
+   * `"mode": "blcok"`) can't silently disable a guard the user believes
+   * is active. An absent file stays a silent no-op.
+   */
+  REQUIRED_CFS_PARSE_ERROR: 'REQUIRED_CFS_PARSE_ERROR',
 
   // TUI
   TUI_REQUIRES_TTY: 'TUI_REQUIRES_TTY',

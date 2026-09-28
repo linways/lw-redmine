@@ -22,12 +22,14 @@
  * `issue.resolve` (destination "Resolved" isn't dev-active).
  */
 
-import { activeProfile } from '../foundation/profiles';
-import { listIssues, updateIssue } from '../api/issues';
+import { activeProfile, resolveProfileName } from '../foundation/profiles';
+import { getIssue, listIssues, updateIssue } from '../api/issues';
 import { assertTransitionAllowed, listStatuses, resolveStatusId } from '../api/statuses';
 import { DEV_ACTIVE_STATUS_NAMES, PAUSE_STATUS_NAME } from '../constants';
 import { logger } from '../foundation/logger';
+import { loadConfig } from '../foundation/config';
 import type { RedmineClient } from '../foundation/client';
+import { syncActiveIssueFromPayload } from './active-issue';
 
 export interface MutexPausedIssue {
   id: number;
@@ -143,6 +145,147 @@ export async function enforceDevActiveMutex(
   }
 
   return { pausedIssues, failedPauses };
+}
+
+// ---------------------------------------------------------------------------
+// Interrupt-style auto-pause
+// ---------------------------------------------------------------------------
+//
+// Used by verbs that mutate a NON-active issue without going through a status
+// PUT that fires `enforceDevActiveMutex` (e.g. `lwr issue resolve` lands on
+// "Resolved", which isn't in DEV_ACTIVE_STATUS_NAMES, so the post-PUT mutex
+// sweep never runs). Without this helper, the dev's active pointer keeps
+// ticking on Redmine while they push a deploy → time entries on the active
+// issue silently absorb the interrupt window.
+//
+// Contract: the active pointer stays SET after the pause. The dev resumes
+// with `lwr issue use <active-id>` + a subsequent `issue status` PUT (or
+// `issue edit --status`), which re-fires the mutex sweep in the normal way.
+
+export interface InterruptPauseResult {
+  /** The Redmine issue that was paused, or `null` if no pause happened. */
+  paused: { id: number; previousStatus: string; newStatus: string } | null;
+  /**
+   * Why `paused` is `null`. `'no-active'` = no pointer set; `'same-issue'` =
+   * target IS the active pointer (no interrupt); `'not-dev-active'` = pointer's
+   * live status isn't in DEV_ACTIVE_STATUS_NAMES (already paused / resolved /
+   * closed externally); `'no-dev-cf'` = profile lacks the developer cf binding
+   * (mutex disabled); `'failed'` = the pause PUT itself threw.
+   */
+  skipped: 'no-active' | 'same-issue' | 'not-dev-active' | 'no-dev-cf' | 'failed' | null;
+  /** Populated when `skipped === 'failed'`. Best-effort; the interrupt verb continues. */
+  failureReason?: string;
+}
+
+const NO_OP_PAUSE: InterruptPauseResult = { paused: null, skipped: 'no-active' };
+
+/**
+ * Pause the active-pointer's Redmine issue iff it's currently in a dev-active
+ * status AND the target of the impending interrupt isn't the active pointer
+ * itself. Call BEFORE the interrupt mutation (resolve / future note / etc.).
+ *
+ * Best-effort: a pause failure (workflow guard rejected, transient network)
+ * is captured in the result, not thrown. The interrupt verb should proceed
+ * and surface the `paused` / `skipped` fields in its response so the agent
+ * can render "⏸ paused #X first" hints.
+ *
+ * After a successful pause, the local pointer's `status` field is
+ * re-synced from the Redmine response — so the next `lwr home` / `issue current`
+ * reads the post-pause state, not the stale dev-active label.
+ */
+export async function pauseActivePointerIfDevActive(
+  client: RedmineClient,
+  targetIssueId: number,
+  profileName: string,
+): Promise<InterruptPauseResult> {
+  let cfg;
+  try {
+    cfg = loadConfig();
+  } catch (err) {
+    logger.debug(`pauseActivePointerIfDevActive: config load failed — skipping (${(err as Error).message})`);
+    return NO_OP_PAUSE;
+  }
+  const profile = cfg.profiles[profileName];
+  const pointer = profile?.activeIssue;
+  if (!pointer) return NO_OP_PAUSE;
+  if (pointer.id === targetIssueId) {
+    return { paused: null, skipped: 'same-issue' };
+  }
+  if (!profile?.me.fieldMap.developer) {
+    return { paused: null, skipped: 'no-dev-cf' };
+  }
+
+  // Live-fetch the active issue. The local pointer's `status` field is a
+  // snapshot — it may say "Development in Progress" while Redmine has already
+  // moved the issue to "Paused" via the web UI. Trust the live read.
+  let live;
+  try {
+    live = await getIssue(client, pointer.id, { allowedStatuses: true });
+  } catch (err) {
+    logger.debug(`pauseActivePointerIfDevActive: GET #${pointer.id} failed — skipping (${(err as Error).message})`);
+    return { paused: null, skipped: 'failed', failureReason: (err as Error).message };
+  }
+
+  if (!(DEV_ACTIVE_STATUS_NAMES as readonly string[]).includes(live.status.name)) {
+    return { paused: null, skipped: 'not-dev-active' };
+  }
+
+  const statuses = await listStatuses(client);
+  const pausedId = resolveStatusId(statuses, PAUSE_STATUS_NAME);
+  const pausedName = statuses.find(s => s.id === pausedId)?.name ?? PAUSE_STATUS_NAME;
+
+  try {
+    assertTransitionAllowed(live, pausedId);
+    const updated = await updateIssue(client, live.id, {
+      statusId: pausedId,
+      notes: `Auto-paused by lwr — interrupt to work on #${targetIssueId}.`,
+    });
+    syncActiveIssueFromPayload(updated, profileName);
+    return {
+      paused: { id: live.id, previousStatus: live.status.name, newStatus: pausedName },
+      skipped: null,
+    };
+  } catch (err) {
+    return { paused: null, skipped: 'failed', failureReason: (err as Error).message };
+  }
+}
+
+/**
+ * Dry-run twin of `pauseActivePointerIfDevActive`. Returns the same shape
+ * but never PUTs. Used by interrupt-verb dry-run previews so the agent can
+ * see "[dry-run] would pause #X" before the real call.
+ */
+export async function previewInterruptPause(
+  client: RedmineClient,
+  targetIssueId: number,
+  profileName?: string,
+): Promise<InterruptPauseResult> {
+  const resolved = profileName ?? resolveProfileName();
+  let cfg;
+  try {
+    cfg = loadConfig();
+  } catch {
+    return NO_OP_PAUSE;
+  }
+  const profile = cfg.profiles[resolved];
+  const pointer = profile?.activeIssue;
+  if (!pointer) return NO_OP_PAUSE;
+  if (pointer.id === targetIssueId) return { paused: null, skipped: 'same-issue' };
+  if (!profile?.me.fieldMap.developer) return { paused: null, skipped: 'no-dev-cf' };
+
+  let live;
+  try {
+    live = await getIssue(client, pointer.id);
+  } catch (err) {
+    return { paused: null, skipped: 'failed', failureReason: (err as Error).message };
+  }
+  if (!(DEV_ACTIVE_STATUS_NAMES as readonly string[]).includes(live.status.name)) {
+    return { paused: null, skipped: 'not-dev-active' };
+  }
+  return {
+    paused: { id: live.id, previousStatus: live.status.name, newStatus: PAUSE_STATUS_NAME },
+    skipped: null,
+  };
 }
 
 /**

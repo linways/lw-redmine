@@ -130,8 +130,9 @@ export function assistantOverridesLogPath(): string {
 //
 // Durable, user-declared (and future agent-inferred) facts. Unlike events,
 // facts are bounded in size and intended for round-tripping through the
-// agent. Today only `preferences.json` is implemented; the rest of
-// ASSISTANT_FACT_FILES are reserved.
+// agent. Implemented today: `preferences.json` (cross-agent default
+// injection) and `required-cfs.json` (required-CF guard on status/close);
+// the rest of ASSISTANT_FACT_FILES are reserved.
 
 export function assistantFactsDir(): string {
   return path.join(configDir(), ASSISTANT_FACTS_DIR);
@@ -139,6 +140,10 @@ export function assistantFactsDir(): string {
 
 export function preferencesFilePath(): string {
   return path.join(assistantFactsDir(), ASSISTANT_FACT_FILES.PREFERENCES);
+}
+
+export function requiredCfsFilePath(): string {
+  return path.join(assistantFactsDir(), ASSISTANT_FACT_FILES.REQUIRED_CFS);
 }
 
 // --- Memory module (~/.lwr/memory/) ---------------------------------------

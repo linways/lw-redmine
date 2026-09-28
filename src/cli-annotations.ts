@@ -231,3 +231,38 @@ export const REPEATABLE_OPTIONS: Record<string, ReadonlySet<string>> = {
   'feedback.log': new Set(['--attempt']),
   'prefs.add': new Set(['--set']),
 };
+
+/**
+ * Per-command enum constraints for options whose accepted values are a
+ * closed set. The MCP layer attaches these as `enum: [...]` on the
+ * option's JSON Schema so well-behaved clients reject invalid values
+ * client-side (one round trip saved per typo).
+ *
+ * Options whose placeholder already carries the pipe-separated form
+ * (e.g. `--mode <pause|resolve|resume>`) are auto-extracted by the
+ * tools.ts builder and don't need an entry here. Use this registry only
+ * for enums advertised in the description rather than the placeholder.
+ *
+ * Keep entries in sync with the validator in the verb's command file
+ * (the validator stays the safety net; the schema is a client-side hint).
+ */
+export const ENUM_OPTIONS: Record<string, Record<string, readonly string[]>> = {
+  'auth.login': {
+    '--method': ['password', 'api-key'],
+  },
+  'issue.list': {
+    '--as': ['developer', 'tester', 'qa', 'lead', 'assignee', 'reporter', 'any'],
+  },
+  'feedback.log': {
+    '--kind': ['gap', 'error'],
+  },
+  'feedback.list': {
+    '--kind': ['gap', 'error'],
+  },
+  'memory.recall': {
+    '--kind': ['observation', 'fact', 'rule-candidate'],
+  },
+  'backup.prune': {
+    '--kind': ['user', 'pre-restore', 'all'],
+  },
+};

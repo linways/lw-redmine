@@ -36,7 +36,9 @@ import {
   bumpTriggerCounts,
   type AppliedDefault,
 } from '../../assistant/preferences';
+import { checkRequiredCfs } from '../../assistant/required-cfs';
 import { recordDecision } from '../../assistant/decisions';
+import { logger } from '../../foundation/logger';
 import { enforceDevActiveMutex, previewDevActiveMutex } from '../../workflow/auto-pause';
 import { syncActiveIssueFromPayload } from '../../workflow/active-issue';
 import { resolveProfileName } from '../../foundation/profiles';
@@ -66,6 +68,8 @@ export interface IssueStatusFlags extends GlobalFlags {
   status?: string;
   note?: string;
   private?: boolean;
+  /** Bypass a "block" mode required-CF guard for the target status. */
+  force?: boolean;
 }
 
 interface StatusVerbPayload {
@@ -125,6 +129,21 @@ const statusCmd: CommandFn<StatusVerbPayload | DryRunPreview> = async (flags) =>
     currentCfValues: currentCfValuesFromIssue(issue.custom_fields),
   });
 
+  // Required-CF guard: after prefs have injected their defaults, verify the
+  // target status's locally-declared required CFs are satisfied (non-empty
+  // on the issue or in the outgoing payload). Block mode throws here (before
+  // the PUT); warn mode returns strings we surface in meta + on stderr. A
+  // malformed rules file surfaces loadWarnings (guard skipped, never fatal).
+  const { warnings: requiredCfWarnings, loadWarnings: requiredCfLoadWarnings } = checkRequiredCfs({
+    targetStatusName: statusName,
+    issueId: issue.id,
+    issueCfs: issue.custom_fields ?? [],
+    outgoingCfs: apply.customFields,
+    force: Boolean(f.force),
+  });
+  for (const w of requiredCfLoadWarnings) logger.warn(w.message);
+  for (const w of requiredCfWarnings) logger.warn(w);
+
   // Dry-run path — preview the status PUT and the would-be mutex sweep
   // (issues that would be paused if the destination is dev-active).
   if (flags.dryRun) {
@@ -155,7 +174,7 @@ const statusCmd: CommandFn<StatusVerbPayload | DryRunPreview> = async (flags) =>
         }
         renderAppliedDefaults(ctx, apply.applied);
       },
-      meta: buildMeta(apply.applied, prefsWarnings),
+      meta: buildMeta(apply.applied, [...prefsWarnings, ...requiredCfLoadWarnings], requiredCfWarnings),
     } as CommandResult<DryRunPreview>;
   }
 
@@ -199,7 +218,7 @@ const statusCmd: CommandFn<StatusVerbPayload | DryRunPreview> = async (flags) =>
       }
       renderAppliedDefaults(ctx, apply.applied);
     },
-    meta: buildMeta(apply.applied, prefsWarnings),
+    meta: buildMeta(apply.applied, [...prefsWarnings, ...requiredCfLoadWarnings], requiredCfWarnings),
   } as CommandResult<StatusVerbPayload>;
 };
 
@@ -217,6 +236,8 @@ export interface IssueCloseFlags extends GlobalFlags {
   private?: boolean;
   /** Override which closed status to use (e.g., "Rejected" vs "Closed"). */
   as?: string;
+  /** Bypass a "block" mode required-CF guard for the closing status. */
+  force?: boolean;
 }
 
 const closeCmd: CommandFn<RedmineIssue | DryRunPreview> = async (flags) => {
@@ -256,6 +277,20 @@ const closeCmd: CommandFn<RedmineIssue | DryRunPreview> = async (flags) => {
     currentCfValues: currentCfValuesFromIssue(issue.custom_fields),
   });
 
+  // Required-CF guard for the chosen closing status (same semantics as
+  // statusCmd): block mode throws before the PUT; warn mode surfaces
+  // strings in meta + on stderr; a malformed rules file surfaces
+  // loadWarnings (guard skipped, never fatal).
+  const { warnings: requiredCfWarnings, loadWarnings: requiredCfLoadWarnings } = checkRequiredCfs({
+    targetStatusName: target.name,
+    issueId: issue.id,
+    issueCfs: issue.custom_fields ?? [],
+    outgoingCfs: apply.customFields,
+    force: Boolean(f.force),
+  });
+  for (const w of requiredCfLoadWarnings) logger.warn(w.message);
+  for (const w of requiredCfWarnings) logger.warn(w);
+
   if (flags.dryRun) {
     const path = REDMINE_PATHS.ISSUE_BY_ID(id);
     const body: Record<string, unknown> = { status_id: target.id };
@@ -275,7 +310,7 @@ const closeCmd: CommandFn<RedmineIssue | DryRunPreview> = async (flags) => {
         writeLine(dim(ctx, `[dry-run] would PUT ${path} — close as "${target!.name}"`));
         renderAppliedDefaults(ctx, apply.applied);
       },
-      meta: buildMeta(apply.applied, prefsWarnings),
+      meta: buildMeta(apply.applied, [...prefsWarnings, ...requiredCfLoadWarnings], requiredCfWarnings),
     } as CommandResult<DryRunPreview>;
   }
 
@@ -303,7 +338,7 @@ const closeCmd: CommandFn<RedmineIssue | DryRunPreview> = async (flags) => {
       writeLine(success(ctx, `Closed #${updated.id} as "${updated.status.name}"`));
       renderAppliedDefaults(ctx, apply.applied);
     },
-    meta: buildMeta(apply.applied, prefsWarnings),
+    meta: buildMeta(apply.applied, [...prefsWarnings, ...requiredCfLoadWarnings], requiredCfWarnings),
   } as CommandResult<RedmineIssue>;
 };
 
@@ -318,10 +353,12 @@ export function closeVerb(flags: IssueCloseFlags): Promise<never> {
 function buildMeta(
   applied: AppliedDefault[],
   warnings: { code: string; message: string }[],
+  requiredCfWarnings: string[] = [],
 ): Record<string, unknown> | undefined {
   const meta: Record<string, unknown> = {};
   if (applied.length > 0) meta.appliedDefaults = applied;
   if (warnings.length > 0) meta.warnings = warnings.map(w => ({ code: w.code, message: w.message }));
+  if (requiredCfWarnings.length > 0) meta.requiredCfWarnings = requiredCfWarnings;
   return Object.keys(meta).length > 0 ? meta : undefined;
 }
 
