@@ -43,7 +43,7 @@ The installer:
 
 1. Verifies Node ≥ 20.
 2. Runs `npm install` + `npm run build` if needed.
-3. Globally links the `lwr` binary (`npm link`) — `lwr` is now on your `PATH`.
+3. Globally links the `lwr` binary (`npm link`) — `lwr` is now on your `PATH`. If linking isn't possible (unwritable or ephemeral npm prefix, global bin off `PATH`), it writes a `~/.local/bin/lwr` wrapper instead rather than failing the install.
 4. Snapshots `SKILL.md` and `recipes/` to `~/.lwr/skill/` (the canonical location).
 5. Detects installed AI tools and symlinks the canonical skill bundle into each:
    - `~/.claude/skills/lw-redmine/` (Claude Code)
@@ -163,7 +163,7 @@ lwr install-skill --target ~/.<your-host>/skills/lw-redmine --json   # symlink i
 
 ## 🔐 First-run login
 
-`lwr` stores credentials in the OS keychain via [keytar](https://github.com/atom/node-keytar) (Keychain on macOS, libsecret on Linux, Credential Vault on Windows), with a `chmod 600` JSON fallback under `~/.lwr/auth.json` if the keychain is unavailable. The password is exchanged for an API key on first login and immediately discarded — it's never persisted.
+`lwr` stores credentials in the OS keychain via [keytar](https://github.com/atom/node-keytar) (Keychain on macOS, libsecret on Linux, Credential Vault on Windows), with a `chmod 600` JSON fallback under `~/.lwr/auth.json` if the keychain is unavailable. `keytar` is an optional dependency — if its native build fails, the installer keeps going and the file fallback is used. Resolution order: `--api-key` flag → `$LWR_API_KEY` → `$LWR_API_KEY_COMMAND` → keychain → file. The password is exchanged for an API key on first login and immediately discarded — it's never persisted.
 
 ### Recommended — interactive login
 
@@ -175,6 +175,26 @@ lwr auth login --method api-key      # prompts for an existing API key instead
 ```
 
 **For AI agents:** do not run `lwr auth login` yourself. Ask the user to open a separate terminal, run the command there, and return when it succeeds. This keeps the credential out of your conversation context, shell history, and process arguments. Once the user confirms login, verify with `lwr auth whoami` and proceed.
+
+### Secret broker — `$LWR_API_KEY_COMMAND`
+
+For machines where no static key can be planted (agent hosts, ephemeral VMs,
+anything fronted by a vault), point `lwr` at a command that prints the key on
+stdout. It runs once per invocation and the result is **never stored** — no
+keychain entry, no `auth.json` — so short-lived tokens work:
+
+```bash
+export LWR_API_KEY_COMMAND='op read op://Private/redmine/credential'  # 1Password
+export LWR_API_KEY_COMMAND='pass show work/redmine'                   # pass
+export LWR_API_KEY_COMMAND='vault kv get -field=key secret/redmine'   # Vault
+```
+
+With this set there is no login ceremony: `lwr auth whoami` works immediately.
+`lwr auth login` is still useful once to build the profile (identity, roles,
+project prefetch) and reports `storage: none`. `lwr doctor` shows
+`auth.apiKey → source: command`. If the command exits non-zero, times out
+(10s), or prints nothing, every command fails with `AUTH_KEY_COMMAND_FAILED` —
+neither the command string nor its output is echoed into the error.
 
 ### CI / scripted environments
 
@@ -421,6 +441,7 @@ Resolution order for any setting (highest wins):
 | `LWR_PROFILE` | Default profile name |
 | `LWR_BASE_URL` | Default base URL |
 | `LWR_API_KEY` | API key (overrides keychain/file) |
+| `LWR_API_KEY_COMMAND` | Command printing the API key on stdout; run per invocation, never persisted |
 | `LWR_NO_INTERACTIVE` | `=1` → never prompt; treat missing values as errors |
 | `LWR_DEBUG` | `=1` → verbose stderr logging |
 | `LWR_CONFIG_DIR` | Override the state directory (used by tests) |

@@ -35,7 +35,19 @@ The repo path is whatever directory contains the cloned `lw-redmine` source. If 
 
 Then run `lwr config base-url <url>` directly in this session. After it succeeds, retry the original command (or proceed to the credential step below).
 
-**Credential step — the user runs this, not you.** After install (and after the base URL is set), `lwr` has no API key yet. Do **not** run `lwr auth login` from inside this session, and do **not** pass `--password '...'` or `--api-key <key>` on the command line — those flags route the user's credential through your chat transcript and the shell history. Instead, give the user this exact instruction:
+**Credential step, path A — a broker is already configured (check this first).** Run `printenv LWR_API_KEY_COMMAND LWR_API_KEY`. If either is set, **there is no credential step** — the key resolves on every invocation and you are already authenticated. Skip straight to `lwr auth whoami`. This is the normal shape on agent-hosted machines (Muse, CI, devcontainers), where no human is at a TTY to type a password.
+
+`LWR_API_KEY_COMMAND` is a shell command that prints the API key on stdout; `lwr` runs it per invocation and **never stores the result**, so short-lived tokens work and nothing lands on disk. Examples:
+
+```bash
+export LWR_API_KEY_COMMAND='op read op://Private/redmine/credential'   # 1Password
+export LWR_API_KEY_COMMAND='pass show work/redmine'                    # pass
+export LWR_API_KEY_COMMAND='muse-credential redmine'                   # Muse/Jarvis authd surrogate
+```
+
+If the profile doesn't exist yet (`CONFIG_PROFILE_MISSING`, or no `~/.lwr/me.md`), you *may* run `lwr auth login` yourself on a broker install — it resolves the key through the broker, builds the `me` block, and stores nothing. Its output says `storage: none`. Failures surface as `AUTH_KEY_COMMAND_FAILED`; report it to the user with the hint verbatim and stop — the broker is theirs to fix, not yours.
+
+**Credential step, path B — no broker: the user runs this, not you.** After install (and after the base URL is set), `lwr` has no API key yet. Do **not** run `lwr auth login` from inside this session, and do **not** pass `--password '...'` or `--api-key <key>` on the command line — those flags route the user's credential through your chat transcript and the shell history. Instead, give the user this exact instruction:
 
 > Open a separate terminal and run `lwr auth login`. Come back here when it prints "logged in" — I'll continue from there.
 
@@ -796,6 +808,7 @@ Branch on `error.code`. Read `error.details` for structured recovery payloads �
 | Code | When | What to do |
 |---|---|---|
 | `AUTH_MISSING` | No API key configured | Tell the user to run `lwr auth login` |
+| `AUTH_KEY_COMMAND_FAILED` | `$LWR_API_KEY_COMMAND` exited non-zero, timed out, or printed nothing | Report the hint verbatim and stop — the user's secret broker is down or misconfigured. Never substitute another credential path. |
 | `AUTH_INVALID` | 401 — key rejected | Same |
 | `AUTH_FORBIDDEN` | 403 — account lacks permission | Suggest a role/permission change in Redmine; for `/users.json` specifically, fall back to `lwr user list --project <id>` |
 | `NOT_FOUND` | 404 | Verify the id; for stale projects, `lwr cache refresh --type projects` |

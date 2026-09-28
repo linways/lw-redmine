@@ -247,6 +247,13 @@ export const CONVERTER_INSTALL_HINTS = {
 export const KEYTAR_SERVICE = 'lwr';
 export const KEYTAR_ACCOUNT = (profile: string) => `${profile}:apiKey`;
 
+/**
+ * Budget for $LWR_API_KEY_COMMAND. Keeps the "never hang in non-TTY"
+ * contract honest when a secret broker is down — a stuck unix-socket
+ * call or a network-backed vault must fail, not block an agent forever.
+ */
+export const KEY_COMMAND_TIMEOUT_MS = 10_000;
+
 // --- HTTP -------------------------------------------------------------------
 
 export const HTTP_TIMEOUT_MS = 15_000;
@@ -314,6 +321,13 @@ export const ENV = {
   BASE_URL: 'LWR_BASE_URL',
   PROFILE: 'LWR_PROFILE',
   API_KEY: 'LWR_API_KEY',
+  /**
+   * Shell command that prints the API key on stdout. Resolved fresh on
+   * every invocation and never persisted — the backend for secret brokers
+   * that can't inject an env var into a CLI process (Muse/Jarvis authd,
+   * 1Password `op read`, `pass`, Vault, gcloud secrets).
+   */
+  API_KEY_COMMAND: 'LWR_API_KEY_COMMAND',
   NO_INTERACTIVE: 'LWR_NO_INTERACTIVE',
   DEBUG: 'LWR_DEBUG',
   CONFIG_DIR: 'LWR_CONFIG_DIR', // override for tests
