@@ -21,6 +21,7 @@
   "files": [
     "dist",
     "SKILL.md",
+    "MUSE.md",
     "install.mjs",
     "README.md",
     "LICENSE",

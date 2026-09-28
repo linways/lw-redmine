@@ -35,6 +35,8 @@ The repo path is whatever directory contains the cloned `lw-redmine` source. If 
 
 Then run `lwr config base-url <url>` directly in this session. After it succeeds, retry the original command (or proceed to the credential step below).
 
+**Muse agents:** before authenticating, read `MUSE.md` — `~/.lwr/skill/MUSE.md`, or the repo root if you have the clone. Never obtain the user's API key yourself — not via browser, chat, or file. The only path is the Secure Vault connector + `$LWR_API_KEY_COMMAND` broker.
+
 **Credential step, path A — a broker is already configured (check this first).** Run `printenv LWR_API_KEY_COMMAND LWR_API_KEY`. If either is set, **there is no credential step** — the key resolves on every invocation and you are already authenticated. Skip straight to `lwr auth whoami`. This is the normal shape on agent-hosted machines (Muse, CI, devcontainers), where no human is at a TTY to type a password.
 
 `LWR_API_KEY_COMMAND` is a shell command that prints the API key on stdout; `lwr` runs it per invocation and **never stores the result**, so short-lived tokens work and nothing lands on disk. Examples:

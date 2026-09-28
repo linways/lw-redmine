@@ -46,7 +46,9 @@ const LWR_DIR = path.join(HOME, '.lwr');
 const SKILL_DIR = path.join(LWR_DIR, 'skill');
 const CANONICAL_SKILL = path.join(SKILL_DIR, 'SKILL.md');
 const CANONICAL_RECIPES = path.join(SKILL_DIR, 'recipes');
+const CANONICAL_MUSE = path.join(SKILL_DIR, 'MUSE.md');
 const REPO_SKILL = path.join(REPO_ROOT, 'SKILL.md');
+const REPO_MUSE = path.join(REPO_ROOT, 'MUSE.md');
 const REPO_RECIPES = path.join(REPO_ROOT, 'recipes');
 const SKILL_NAME = 'lw-redmine';
 const REPO_DIST = path.join(REPO_ROOT, 'dist', 'cli.js');
@@ -150,6 +152,7 @@ function install() {
   installAllSkills();
   installClaudePermissions();
   printNextSteps();
+  printMuseGuide();
 }
 
 function update() {
@@ -392,6 +395,12 @@ function refreshCanonicalSkill() {
   }
   fs.mkdirSync(SKILL_DIR, { recursive: true });
   fs.copyFileSync(REPO_SKILL, CANONICAL_SKILL);
+  // MUSE.md rides along so SKILL.md's "read MUSE.md" pointer resolves for an
+  // agent that loaded the skill from its tool's folder and has no idea where
+  // the repo lives.
+  if (fs.existsSync(REPO_MUSE)) {
+    fs.copyFileSync(REPO_MUSE, CANONICAL_MUSE);
+  }
   // Track when we wrote it so `status` can show age.
   fs.utimesSync(CANONICAL_SKILL, new Date(), new Date());
   ok(`canonical skill snapshot → ${CANONICAL_SKILL}`);
@@ -727,6 +736,47 @@ function humanAge(ms) {
   if (ms < 3_600_000) return `${Math.round(ms / 60_000)}m ago`;
   if (ms < 86_400_000) return `${Math.round(ms / 3_600_000)}h ago`;
   return `${Math.round(ms / 86_400_000)}d ago`;
+}
+
+/**
+ * Brief a Muse agent at the one moment it is guaranteed to be reading:
+ * installer stdout. A doc only guides if it gets opened, and on
+ * 2026-09-28 an agent worked from SKILL.md alone and took the browser
+ * shortcut to the user's API key. The rule below is printed verbatim
+ * because it's the part that matters; the steps stay one-liners so
+ * MUSE.md remains the single source of truth for the detail.
+ */
+function printMuseGuide() {
+  const muse = AI_TOOLS.find(t => t.id === 'muse');
+  if (!muse || !toolDetected(muse)) return;
+
+  const guide = fs.existsSync(CANONICAL_MUSE) ? CANONICAL_MUSE : REPO_MUSE;
+  console.log(`
+${C.bold}Muse detected — read this before authenticating${C.reset}
+
+${C.bold}Never obtain the user's Redmine API key yourself.${C.reset} Not from chat, not from
+the browser (even with a saved login, even if the user is already signed in),
+not from any file, not from any command output. The key travels exactly one
+path:
+
+  user ${C.dim}→${C.reset} Secure Vault connector (via the secure link you hand them)
+       ${C.dim}→${C.reset} short-lived surrogate ${C.dim}→${C.reset} \$LWR_API_KEY_COMMAND ${C.dim}→${C.reset} Redmine
+
+If you catch yourself about to read the key from anywhere else, stop. The
+secure link costs the user one paste; a shortcut costs them a compromised
+credential.
+
+${C.bold}Setup:${C.reset}
+  1. Install ${C.dim}— done, you are here.${C.reset}
+  2. Ask for the Redmine URL (not sensitive) ${C.dim}→${C.reset} ${C.green}lwr config base-url <url>${C.reset}
+  3. Reuse or create a Secure Vault connector for that host
+     ${C.dim}(placement: custom header X-Redmine-API-Key)${C.reset}, hand the user the secure link
+  4. Set ${C.green}\$LWR_API_KEY_COMMAND${C.reset} to print a short-lived surrogate on stdout
+  5. ${C.green}lwr auth login${C.reset} once ${C.dim}— stores nothing; builds the profile${C.reset}
+  6. Verify: ${C.green}lwr auth whoami${C.reset}, and ${C.green}lwr doctor${C.reset} shows ${C.dim}auth.apiKey → source: command${C.reset}
+
+${C.bold}Full guide (read it before step 3):${C.reset} ${guide}
+`);
 }
 
 function printNextSteps() {
