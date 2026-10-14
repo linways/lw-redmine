@@ -7,7 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-10-14
+
 ### Added
+
+- **`--spent <duration>` on `issue status` / `issue edit` / `issue resolve`** —
+  logs time on the issue in the same call instead of a follow-up `time log`
+  (`--activity` picks the activity). Validated before the PUT, posted after it;
+  returned as `data.timeEntry`. Refused up front when the issue would end in a
+  closed status.
+- **`issue view` detects the college DB** from the description
+  (`Database and CHT Instance -> test_ccm1013`, `db: …`) and prints
+  `db : test_ccm1013 @ V4-server84`. The server is resolved through the
+  optional `lwdb` CLI (3s timeout, first matching server wins); without it
+  only the name is shown. JSON: `data.detected_db = { name, server | null }`.
+- **`lwr route <text…>` (EXPERIMENTAL)** — suggests which lwr command fulfils a
+  natural-language request via TypeSafe's Jev model (needs `$JEV_API`).
+  Suggest-only, never executes; sends only the request text + command catalog.
+  New error codes `JEV_KEY_MISSING`, `JEV_REQUEST_FAILED`.
+- **`docs/muse-connector-AGENTS.md`** — raw-Redmine agent guide for a Muse
+  custom connector, with `scripts/check-redmine-connector.mjs` (read-only) to
+  verify it against the live instance.
 
 - **`$LWR_API_KEY_COMMAND` auth backend** — a command that prints the API key on
   stdout, run once per invocation and never persisted. Covers every secret
@@ -27,6 +47,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`issue show`** is an alias for `issue view`.
+- **Parse errors print one line** (`error: … (add --help for usage)`, plus a
+  did-you-mean) instead of dumping the full help.
+- **`issue view` journal is readable** — custom fields show their names instead
+  of `cf.79`, and known ids show names: `status_id: 2 (Development in Progress)
+  → 39 (Development Completed)`, `Developer: - → 278 (Deepak PS)`. Pretty
+  output only; JSON is unchanged.
 - **`keytar` is an optional dependency.** Its native build fails on restricted
   machines (no toolchain, no libsecret, non-root npm prefix) and used to abort
   the whole install, even though the file fallback would have worked. Install
@@ -79,4 +106,6 @@ Initial public release.
 - Untrusted-content wrappers for issue bodies and comments (`wrapUntrusted`).
 - Scrubbed environment forwarding for spawned subprocesses (`scrubbedEnv`).
 
+[Unreleased]: https://github.com/linways/lw-redmine/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/linways/lw-redmine/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/linways/lw-redmine/releases/tag/v0.1.0

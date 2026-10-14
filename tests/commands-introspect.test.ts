@@ -172,6 +172,7 @@ function buildMockProgram(): Command {
   program.command('home').description('landing view');
   program.command('commands').description('introspect').option('--filter <p>', 'filter');
   program.command('serve').description('mcp server').option('--mcp', 'mcp mode');
+  program.command('route <text...>').description('experimental jev router');
   program.command('doctor').description('doctor');
   program.command('update').description('update lwr itself');
   program.command('update-skill').description('update skill');

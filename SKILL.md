@@ -846,7 +846,9 @@ Do you know the numeric id?
 ├─ yes  →  pick the verb based on what the user is asking for:
 │            ├─ view / show / describe / "what's the status of" / "who's on"
 │            │    →  lwr issue view <id> --json
-│            │       (cheap; no attachment download; no on-disk copy)
+│            │       (cheap; no attachment download; no on-disk copy;
+│            │        `data.detected_db` = {name, server|null} — the college DB
+│            │        from the description, server via lwdb when installed)
 │            │
 │            └─ analyze / review / read the attached / summarize the PDF /
 │               "understand the issue fully" / "fetch the issue and its files"
@@ -1392,7 +1394,9 @@ issue     use     <id>                              # set active issue (auto-pau
           view   <id> [--no-detail]
           fetch  <id> [--force] [--no-convert]      # materialise locally
           attach <id> <files...> [--message TEXT]
-          status  <id> <name-or-id> [--note TEXT]   # auto-pauses the active pointer when <id> differs
+          status  <id> <name-or-id> [--note TEXT] [--spent DURATION] [--activity NAME]
+                                                    # auto-pauses the active pointer when <id> differs
+                                                    # --spent logs time in the SAME call — use it instead of a follow-up `time log`
           close   <id>              [--as NAME] [--note TEXT]
           assign  <id> <me|none|userId|login|name> [--note TEXT]
           watch / unwatch <id>      [--user me|userId]
@@ -1400,7 +1404,7 @@ issue     use     <id>                              # set active issue (auto-pau
           transitions <id>                          # what can I move it to?
           create  --project P --subject "..." [field flags...]
                   [--cf <name-or-id>=<value> ...]      # repeatable; custom-field setter
-          edit    <id> [--status NAME | --status-id N]
+          edit    <id> [--status NAME | --status-id N] [--spent DURATION] [--activity NAME]
                        [--assignee NAME | --assignee-id N]
                        [--cf <name-or-id>=<value> ...] # repeatable; custom-field setter
                        [other field flags...]

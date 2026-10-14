@@ -42,6 +42,7 @@ import { logger } from '../../foundation/logger';
 import { enforceDevActiveMutex, previewDevActiveMutex } from '../../workflow/auto-pause';
 import { syncActiveIssueFromPayload } from '../../workflow/active-issue';
 import { resolveProfileName } from '../../foundation/profiles';
+import { parseSpent, planSpent, logSpent, assertSpentAllowed, type LoggedSpent } from './spent';
 
 // ---------------------------------------------------------------------------
 // Shared id parsing
@@ -70,10 +71,16 @@ export interface IssueStatusFlags extends GlobalFlags {
   private?: boolean;
   /** Bypass a "block" mode required-CF guard for the target status. */
   force?: boolean;
+  /** Also log time on this issue after the status PUT (`1h`, `30m`, `0.25`). */
+  spent?: string;
+  /** Activity for the --spent entry. Default: the instance default activity. */
+  activity?: string;
 }
 
 interface StatusVerbPayload {
   issue: RedmineIssue;
+  /** Time entry posted via --spent; null when --spent wasn't passed. */
+  timeEntry: LoggedSpent | null;
   /**
    * Issues that were paused by the dev-active mutex sweep after this PUT.
    * Empty when:
@@ -90,6 +97,7 @@ interface StatusVerbPayload {
 const statusCmd: CommandFn<StatusVerbPayload | DryRunPreview> = async (flags) => {
   const f = flags as IssueStatusFlags;
   const id = normaliseId(f.id);
+  const hours = parseSpent(f.spent);
   if (!f.status || f.status.trim().length === 0) {
     throw new ValidationError(
       'Status name or id is required.',
@@ -144,6 +152,9 @@ const statusCmd: CommandFn<StatusVerbPayload | DryRunPreview> = async (flags) =>
   for (const w of requiredCfLoadWarnings) logger.warn(w.message);
   for (const w of requiredCfWarnings) logger.warn(w);
 
+  if (hours !== null) assertSpentAllowed(issue, statusId);
+  const spentPlan = await planSpent(session.client, hours, f.activity);
+
   // Dry-run path — preview the status PUT and the would-be mutex sweep
   // (issues that would be paused if the destination is dev-active).
   if (flags.dryRun) {
@@ -162,6 +173,7 @@ const statusCmd: CommandFn<StatusVerbPayload | DryRunPreview> = async (flags) =>
         status: { id: statusId, name: statusName },
         currentStatus: issue.status,
         wouldPause: mutexPreview.wouldPause,
+        timeEntry: spentPlan ? { hours: spentPlan.hours, activity: { id: spentPlan.activityId, name: spentPlan.activityName } } : null,
       },
       guards: ['workflow.allowed_transition'],
     });
@@ -169,6 +181,7 @@ const statusCmd: CommandFn<StatusVerbPayload | DryRunPreview> = async (flags) =>
       json: preview,
       pretty: ctx => {
         writeLine(dim(ctx, `[dry-run] would PUT ${path} — status ${issue.status.name} → ${statusName}`));
+        if (spentPlan) writeLine(dim(ctx, `[dry-run] would POST ${REDMINE_PATHS.TIME_ENTRIES} — ${spentPlan.hours}h on #${id} (${spentPlan.activityName})`));
         for (const p of mutexPreview.wouldPause) {
           writeLine(dim(ctx, `[dry-run] would PUT #${p.id} → Paused (mutex: ${p.currentStatus} → Paused)`));
         }
@@ -188,6 +201,8 @@ const statusCmd: CommandFn<StatusVerbPayload | DryRunPreview> = async (flags) =>
 
   syncActiveIssueFromPayload(updated, resolveProfileName(flags.profile));
 
+  const timeEntry = spentPlan ? await logSpent(session.client, id, spentPlan) : null;
+
   bumpTriggerCounts(apply.firedRuleIds);
   recordDecision({
     at: new Date().toISOString(),
@@ -203,6 +218,7 @@ const statusCmd: CommandFn<StatusVerbPayload | DryRunPreview> = async (flags) =>
 
   const payload: StatusVerbPayload = {
     issue: updated,
+    timeEntry,
     pausedIssues: mutex.pausedIssues,
     failedPauses: mutex.failedPauses,
   };
@@ -210,6 +226,7 @@ const statusCmd: CommandFn<StatusVerbPayload | DryRunPreview> = async (flags) =>
     json: payload,
     pretty: ctx => {
       writeLine(success(ctx, `#${updated.id} → ${updated.status.name}`));
+      if (timeEntry) writeLine(dim(ctx, `  logged ${timeEntry.hours}h (${timeEntry.activity})`));
       for (const p of mutex.pausedIssues) {
         writeLine(dim(ctx, `  ⏸ paused #${p.id} (${p.previousStatus} → ${p.newStatus})`));
       }

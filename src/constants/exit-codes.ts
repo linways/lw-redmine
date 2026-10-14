@@ -177,6 +177,12 @@ export const ERROR_CODES = {
    */
   BACKUP_BUNDLE_INVALID: 'BACKUP_BUNDLE_INVALID',
 
+  // Experimental: `lwr route` (Jev decision model)
+  /** `lwr route` needs a TypeSafe Jev API key in the env var named by JEV_API_KEY_ENV. */
+  JEV_KEY_MISSING: 'JEV_KEY_MISSING',
+  /** Jev answered non-2xx or with an unexpected shape. `details.status` carries the HTTP status. */
+  JEV_REQUEST_FAILED: 'JEV_REQUEST_FAILED',
+
   // Catch-all
   INTERNAL: 'INTERNAL',
 } as const;

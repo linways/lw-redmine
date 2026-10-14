@@ -22,6 +22,17 @@ lwr time activities --json                            # cache-first activity cat
 | "fix the hours on entry 4711" | `lwr time edit` |
 | "delete that bad entry" | `lwr time delete` (double-confirm) |
 
+## Status change + time in one call
+
+When the user changes an issue AND reports time on it ("mark #X dev completed, took 1h"), don't run `issue status` then `time log` — pass `--spent` on the mutation:
+
+```text
+lwr issue status <id> "Development Completed" --spent 1h [--activity Development] --json
+lwr issue edit <id> --cf "Tester=Alex Biju" --status "Development Completed" --spent 30m --json
+```
+
+The time entry is posted after the PUT and returned as `data.timeEntry`. `--spent` accepts `5m`, `1h`, `1h30m`, `0.25`; activity defaults to the instance default. Rejected up front (nothing changed) when the issue would end in a closed status — Redmine refuses time on closed issues; log first with `time log`, then change status. If the PUT lands but the time POST fails, the error says so: **don't re-run the issue command** — run the `time log` from the hint.
+
 ## Activity resolution
 
 Activity resolution mirrors `--status`: pass `--activity Development` (name, case-insensitive) and `lwr` resolves to the numeric id via the cached `time_entry_activities` enumeration. Pass `--activity-id N` only when you already have the id; passing both fails with `VALIDATION_BAD_VALUE`. If neither flag is given, `lwr time log` falls back to the instance's default activity.

@@ -33,6 +33,7 @@ import { recordDecision, recordOverride } from '../../assistant/decisions';
 import { enforceDevActiveMutex, previewDevActiveMutex } from '../../workflow/auto-pause';
 import { syncActiveIssueFromPayload } from '../../workflow/active-issue';
 import { resolveProfileName } from '../../foundation/profiles';
+import { parseSpent, planSpent, logSpent, assertSpentAllowed, type LoggedSpent } from './spent';
 
 export interface IssueEditFlags extends GlobalFlags {
   id?: string | number;
@@ -62,10 +63,16 @@ export interface IssueEditFlags extends GlobalFlags {
    * project (with `raw:` / `id:` escape hatches for ambiguous cases).
    */
   cf?: string[];
+  /** Also log time on this issue after the edit PUT (`1h`, `30m`, `0.25`). */
+  spent?: string;
+  /** Activity for the --spent entry. Default: the instance default activity. */
+  activity?: string;
 }
 
 interface EditPayload {
   issue: RedmineIssue;
+  /** Time entry posted via --spent; null when --spent wasn't passed. */
+  timeEntry: LoggedSpent | null;
   /**
    * Issues paused by the dev-active mutex sweep after this edit. Empty
    * when the edit didn't change status, the new status isn't in
@@ -86,6 +93,7 @@ const cmd: CommandFn<EditPayload | DryRunPreview> = async (flags): Promise<Comma
     );
   }
   const id = normaliseId(flgs.id);
+  const hours = parseSpent(flgs.spent);
 
   if (flgs.status !== undefined && flgs.statusId !== undefined) {
     throw new ValidationError(
@@ -109,7 +117,8 @@ const cmd: CommandFn<EditPayload | DryRunPreview> = async (flags): Promise<Comma
   // Fetch the issue when status is changing (for the workflow guard) OR
   // when preferences exist AND the user is touching cfs (so the apply
   // path can check whether a target cf is already non-blank).
-  const needsIssue = haveStatusChange || (rules.length > 0 && haveCfChange);
+  // ...or when --spent is set (closed-issue guard needs allowed_statuses).
+  const needsIssue = haveStatusChange || (rules.length > 0 && haveCfChange) || hours !== null;
 
   let issue: RedmineIssue | undefined;
   let resolvedStatusId: number | undefined;
@@ -170,9 +179,14 @@ const cmd: CommandFn<EditPayload | DryRunPreview> = async (flags): Promise<Comma
     throw new ValidationError(
       'Nothing to update.',
       ERROR_CODES.VALIDATION_MISSING_FLAG,
-      'Pass at least one field flag, e.g. `--status "In Progress"` or `--notes "..."`.',
+      flgs.spent !== undefined
+        ? 'To only log time, use `lwr time log <id> --hours N`.'
+        : 'Pass at least one field flag, e.g. `--status "In Progress"` or `--notes "..."`.',
     );
   }
+
+  if (hours !== null && issue) assertSpentAllowed(issue, resolvedStatusId ?? issue.status.id);
+  const spentPlan = await planSpent(session.client, hours, flgs.activity);
 
   if (flags.dryRun) {
     const path = REDMINE_PATHS.ISSUE_BY_ID(id);
@@ -197,6 +211,9 @@ const cmd: CommandFn<EditPayload | DryRunPreview> = async (flags): Promise<Comma
     if (mutexPreview.wouldPause.length > 0) {
       resolved.wouldPause = mutexPreview.wouldPause;
     }
+    if (spentPlan) {
+      resolved.timeEntry = { hours: spentPlan.hours, activity: { id: spentPlan.activityId, name: spentPlan.activityName } };
+    }
     const preview = dryRunPreview({
       method: 'PUT',
       path,
@@ -208,6 +225,7 @@ const cmd: CommandFn<EditPayload | DryRunPreview> = async (flags): Promise<Comma
       json: preview,
       pretty: ctx => {
         writeLine(dim(ctx, `[dry-run] would PUT ${path} — ${Object.keys(input).length} field(s)`));
+        if (spentPlan) writeLine(dim(ctx, `[dry-run] would POST ${REDMINE_PATHS.TIME_ENTRIES} — ${spentPlan.hours}h on #${id} (${spentPlan.activityName})`));
         for (const p of mutexPreview.wouldPause) {
           writeLine(dim(ctx, `[dry-run] would PUT #${p.id} → Paused (mutex: ${p.currentStatus} → Paused)`));
         }
@@ -220,6 +238,8 @@ const cmd: CommandFn<EditPayload | DryRunPreview> = async (flags): Promise<Comma
   const updated = await updateIssue(session.client, id, input);
 
   syncActiveIssueFromPayload(updated, resolveProfileName(flags.profile));
+
+  const timeEntry = spentPlan ? await logSpent(session.client, id, spentPlan) : null;
 
   // After the PUT lands, bump counters + log to the events corpus.
   bumpTriggerCounts(apply.firedRuleIds);
@@ -253,6 +273,7 @@ const cmd: CommandFn<EditPayload | DryRunPreview> = async (flags): Promise<Comma
 
   const payload: EditPayload = {
     issue: updated,
+    timeEntry,
     pausedIssues: mutex.pausedIssues,
     failedPauses: mutex.failedPauses,
   };
@@ -260,6 +281,7 @@ const cmd: CommandFn<EditPayload | DryRunPreview> = async (flags): Promise<Comma
     json: payload,
     pretty: ctx => {
       writeLine(success(ctx, `Updated #${updated.id}`));
+      if (timeEntry) writeLine(dim(ctx, `  logged ${timeEntry.hours}h (${timeEntry.activity})`));
       for (const p of mutex.pausedIssues) {
         writeLine(dim(ctx, `  ⏸ paused #${p.id} (${p.previousStatus} → ${p.newStatus})`));
       }

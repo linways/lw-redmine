@@ -34,8 +34,7 @@ import { runCommand, type CommandFn, type CommandResult, type GlobalFlags, dryRu
 import { openSession } from '../../foundation/session';
 import { getIssue, updateIssue } from '../../api/issues';
 import { assertTransitionAllowed, listStatuses, resolveStatusId } from '../../api/statuses';
-import { listActivities, resolveActivityId } from '../../api/activities';
-import { createTimeEntry } from '../../api/time-entries';
+import { parseSpent, planSpent, logSpent } from './spent';
 import { saveConfig, loadConfig } from '../../foundation/config';
 import { resolveProfileName } from '../../foundation/profiles';
 import { writeMeMarkdown } from '../../workflow/me';
@@ -52,7 +51,6 @@ import {
   type AppliedDefault,
 } from '../../assistant/preferences';
 import { recordDecision } from '../../assistant/decisions';
-import { roundHours } from '../../foundation/numbers';
 import { writeLine } from '../../foundation/output';
 import { success, dim } from '../../foundation/format';
 import { ValidationError } from '../../foundation/errors';
@@ -98,8 +96,7 @@ interface Payload {
 const cmd: CommandFn<Payload | DryRunPreview> = async (flags) => {
   const f = flags as IssueResolveFlags;
   const targetId = normaliseIssueId(f.id);
-  const hoursRaw = f.spent !== undefined && f.spent !== 'none' ? parseDuration(f.spent) : null;
-  const hours = hoursRaw !== null ? (roundHours(hoursRaw) ?? hoursRaw) : null;
+  const hours = parseSpent(f.spent);
   const profileName = resolveProfileName(flags.profile);
 
   const session = await openSession(flags);
@@ -109,6 +106,9 @@ const cmd: CommandFn<Payload | DryRunPreview> = async (flags) => {
   if (flags.dryRun) {
     return await previewResolve(session.client, targetId, hours, f, profileName);
   }
+
+  // Resolve the activity before any PUT so a bad --activity changes nothing.
+  const spentPlan = await planSpent(session.client, hours, f.activity, DEFAULT_ACTIVITY_NAME);
 
   // Step 0: interrupt-pause. If the active pointer is on a different issue
   // and that issue is currently in DEV_ACTIVE, PUT it → Paused first. Best-
@@ -148,28 +148,9 @@ const cmd: CommandFn<Payload | DryRunPreview> = async (flags) => {
   // one — caller can detect this in the payload.
 
   // Step 2: time entry (only when --spent supplied).
-  let timeEntry: Payload['timeEntry'] = null;
-  if (hours !== null) {
-    const activities = await listActivities(session.client);
-    const requestedActivity = f.activity ?? DEFAULT_ACTIVITY_NAME;
-    let activityId: number;
-    try {
-      activityId = resolveActivityId(activities, requestedActivity);
-    } catch (err) {
-      throw new ValidationError(
-        err instanceof Error ? err.message : String(err),
-        ERROR_CODES.VALIDATION_BAD_VALUE,
-      );
-    }
-    const activityName = activities.find(a => a.id === activityId)?.name ?? requestedActivity;
-    const entry = await createTimeEntry(session.client, {
-      issueId: targetId,
-      hours,
-      activityId,
-      comments: f.note ?? `Resolved (deployed to production)`,
-    });
-    timeEntry = { id: entry.id, hours: entry.hours, activity: activityName };
-  }
+  const timeEntry: Payload['timeEntry'] = spentPlan
+    ? await logSpent(session.client, targetId, spentPlan, f.note ?? `Resolved (deployed to production)`)
+    : null;
 
   // Step 3: if the resolved issue WAS the active pointer, clear it.
   const pointerCleared = maybeClearPointer(targetId, flags);
@@ -276,16 +257,8 @@ async function previewResolve(
     currentCfValues: currentCfValuesFromIssue(issue.custom_fields),
   });
 
-  let activityPreview: { id: number; name: string } | null = null;
-  if (hours !== null) {
-    const activities = await listActivities(client);
-    const requestedActivity = f.activity ?? DEFAULT_ACTIVITY_NAME;
-    const activityId = resolveActivityId(activities, requestedActivity);
-    activityPreview = {
-      id: activityId,
-      name: activities.find(a => a.id === activityId)?.name ?? requestedActivity,
-    };
-  }
+  const plan = await planSpent(client, hours, f.activity, DEFAULT_ACTIVITY_NAME);
+  const activityPreview = plan ? { id: plan.activityId, name: plan.activityName } : null;
 
   const path = REDMINE_PATHS.ISSUE_BY_ID(targetId);
   const body: Record<string, unknown> = { status_id: resolvedId };
@@ -344,54 +317,6 @@ function normaliseIssueId(input: string | number | undefined): number {
     );
   }
   return n;
-}
-
-/**
- * Parse a duration string into decimal hours.
- *   "5m" → 0.0833…    "1h" → 1     "1h30m" → 1.5     "0.25" → 0.25
- */
-function parseDuration(input: string): number {
-  const s = input.trim().toLowerCase();
-  if (s.length === 0) {
-    throw new ValidationError(
-      'Empty --spent value.',
-      ERROR_CODES.VALIDATION_BAD_VALUE,
-      'Pass e.g. `--spent 10m`, `--spent 1h`, or `--spent 0.25`.',
-    );
-  }
-  const both = /^(\d+(?:\.\d+)?)h(\d+(?:\.\d+)?)m$/.exec(s);
-  if (both) {
-    const h = Number(both[1]) + Number(both[2]) / 60;
-    if (h <= 0) throw badDuration(input);
-    return h;
-  }
-  const minOnly = /^(\d+(?:\.\d+)?)m$/.exec(s);
-  if (minOnly) {
-    const h = Number(minOnly[1]) / 60;
-    if (h <= 0) throw badDuration(input);
-    return h;
-  }
-  const hOnly = /^(\d+(?:\.\d+)?)h$/.exec(s);
-  if (hOnly) {
-    const h = Number(hOnly[1]);
-    if (h <= 0) throw badDuration(input);
-    return h;
-  }
-  const dec = /^(\d+(?:\.\d+)?)$/.exec(s);
-  if (dec) {
-    const h = Number(dec[1]);
-    if (h <= 0) throw badDuration(input);
-    return h;
-  }
-  throw badDuration(input);
-}
-
-function badDuration(input: string): ValidationError {
-  return new ValidationError(
-    `Invalid --spent "${input}".`,
-    ERROR_CODES.VALIDATION_BAD_VALUE,
-    'Accepted forms: `5m`, `10m`, `15m`, `1h`, `1h30m`, or a bare decimal like `0.25` (hours).',
-  );
 }
 
 export function resolve(flags: IssueResolveFlags): Promise<never> {
