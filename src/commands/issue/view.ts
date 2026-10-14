@@ -12,7 +12,7 @@ import { writeLine } from '../../foundation/output';
 import { header, dim, statusBadge, priorityBadge, hyperlink } from '../../foundation/format';
 import { ValidationError } from '../../foundation/errors';
 import { readCustomFieldsCatalog, readProjectCache, readStatusesCache } from '../../foundation/cache';
-import { ERROR_CODES, LWDB_BIN, LWDB_LOOKUP_TIMEOUT_MS } from '../../constants';
+import { DB_SCAN_MAX_CHARS, ERROR_CODES, LWDB_BIN, LWDB_LOOKUP_TIMEOUT_MS } from '../../constants';
 import type { IdName, RedmineIssue } from '../../api/types';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -63,11 +63,14 @@ const DB_TOKEN = /\b[a-z][a-z0-9]*_\w*\d\w*\b/i;
 
 export function detectDbName(description: string | undefined): string | undefined {
   if (!description) return undefined;
-  for (const m of description.matchAll(DB_LABEL)) {
+  // DB_LABEL is O(matches × line length) — quadratic on a long `db db db…` line, and any
+  // Redmine user controls the description. The DB line sits at the top of the template.
+  const text = description.slice(0, DB_SCAN_MAX_CHARS);
+  for (const m of text.matchAll(DB_LABEL)) {
     const t = m[1].match(DB_TOKEN);
     if (t) return t[0];
   }
-  return description.match(/\btest_\w+\b/i)?.[0];
+  return text.match(/\btest_\w+\b/i)?.[0];
 }
 
 /** Ask the optional lwdb CLI which server holds `db`. Any failure → undefined. */

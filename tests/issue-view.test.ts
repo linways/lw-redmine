@@ -13,4 +13,10 @@ describe('detectDbName', () => {
   ])('%j → %s', (desc, want) => {
     expect(detectDbName(desc)).toBe(want);
   });
+
+  it('stays fast on a hostile description (ReDoS)', () => {
+    const t0 = performance.now();
+    expect(detectDbName('db '.repeat(500_000))).toBeUndefined();
+    expect(performance.now() - t0).toBeLessThan(500);
+  });
 });
