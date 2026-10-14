@@ -112,12 +112,14 @@ export const COMMAND_ANNOTATIONS: Record<string, CommandAnnotation> = {
   'issue.view': { safety: 'read', idempotent: true, network: true },
   // POST creates a brand-new issue every call → not idempotent.
   'issue.create': { safety: 'mutate', idempotent: false, network: true },
-  'issue.edit': { safety: 'mutate', idempotent: true, network: true },
+  // Not idempotent: a retry with --spent posts a second time entry.
+  'issue.edit': { safety: 'mutate', idempotent: false, network: true },
   // Local materialisation; re-runs converge (--force re-downloads).
   'issue.fetch': { safety: 'mutate', idempotent: true, network: true },
   // Each call uploads + appends to the journal — not idempotent.
   'issue.attach': { safety: 'mutate', idempotent: false, network: true },
-  'issue.status': { safety: 'mutate', idempotent: true, network: true },
+  // Not idempotent: a retry with --spent posts a second time entry.
+  'issue.status': { safety: 'mutate', idempotent: false, network: true },
   'issue.close': { safety: 'mutate', idempotent: true, network: true },
   'issue.assign': { safety: 'mutate', idempotent: true, network: true },
   'issue.watch': { safety: 'mutate', idempotent: true, network: true },
@@ -201,6 +203,8 @@ export const COMMAND_ANNOTATIONS: Record<string, CommandAnnotation> = {
   // `commands` itself — the introspection verb. Pure read of the in-memory
   // commander tree; no Redmine call, no disk write.
   'commands': { safety: 'read', idempotent: true, network: false },
+  // EXPERIMENTAL: network = TypeSafe Jev API, not Redmine.
+  'route': { safety: 'read', idempotent: true, network: true },
 
   // `home` — the bare-`lwr` landing view. Best-effort GET on the
   // active issue so the greeting never quotes a stale status; falls

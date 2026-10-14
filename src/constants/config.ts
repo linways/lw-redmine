@@ -214,6 +214,13 @@ export const ISSUE_FILE = {
 // `mutool draw`, point at a LibreOffice fork, etc. Install hints are colocated
 // since they're the natural "missing dependency" surface.
 
+// `lwr issue view` resolves the description's college DB to its server via
+// the optional lwdb CLI. Missing binary / timeout → db shown without server.
+export const LWDB_BIN = 'lwdb';
+export const LWDB_LOOKUP_TIMEOUT_MS = 3000;
+/** Chars of the description scanned for the DB line — bounds regex cost on hostile input. */
+export const DB_SCAN_MAX_CHARS = 4000;
+
 export const CONVERTER_BIN = {
   PDFTOPPM: 'pdftoppm',
   LIBREOFFICE: 'libreoffice',

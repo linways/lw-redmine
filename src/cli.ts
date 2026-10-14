@@ -64,6 +64,7 @@ import * as installSkillCmd from './commands/install-skill';
 import * as updateCmd from './commands/update';
 import * as commandsCmdMod from './commands/commands';
 import * as serveCmd from './commands/serve';
+import * as routeCmdMod from './commands/route';
 import * as assistantCmd from './commands/assistant';
 import * as eventsCmd from './commands/events';
 import * as memoryCmd from './commands/memory';
@@ -112,7 +113,8 @@ function build(): Command {
     .option('--base-url <url>', 'Override Redmine base URL for this invocation')
     .option('--api-key <key>', 'Override API key for this invocation')
     .option('--dry-run', 'Show what a mutating command *would* do (resolved ids, payload, passed guards) without sending the POST/PUT/DELETE. No-op for read commands.')
-    .showHelpAfterError();
+    // One-line hint, not the full help dump — inherited by every subcommand.
+    .showHelpAfterError('(add --help for usage)');
 
   // --- home ---------------------------------------------------------------
   //
@@ -413,6 +415,7 @@ function build(): Command {
 
   issue
     .command('view <id>')
+    .alias('show')
     .description('View an issue with journals + attachments')
     .option('--no-detail', 'Skip journals/attachments/relations')
     .action(async function (this: Command, id: string) {
@@ -448,7 +451,7 @@ function build(): Command {
 
   issue
     .command('edit <id>')
-    .description('Edit an issue')
+    .description('Edit an issue (fields, status, custom fields, notes). Pass --spent to also log time on it in the same call.')
     .option('--subject <text>', 'New subject')
     .option('--description <text>', 'New description')
     .option('--description-file <path>', 'Read description from file (or - for stdin)')
@@ -466,6 +469,8 @@ function build(): Command {
     .option('--notes <text>', 'Add a note alongside the edit')
     .option('--notes-file <path>', 'Read notes from file (or - for stdin)')
     .option('--private-notes', 'Mark notes as private')
+    .option('--spent <duration>', 'Also log time on this issue after the edit, today (e.g. 30m, 1h, 1h30m, 0.25). Saves a separate `time log` call.')
+    .option('--activity <name>', 'Activity for the --spent entry (default: instance default activity)')
     .option(
       '--cf <kv>',
       'Custom-field setter, repeatable. Form: <name-or-id>=<value>. e.g. --cf "Tester=Alex Biju" or --cf 88=42. Prefix `raw:` to force a literal string, `id:` for an explicit id.',
@@ -503,10 +508,12 @@ function build(): Command {
 
   issue
     .command('status <id> <status>')
-    .description('Set issue status by name or numeric id')
+    .description('Set issue status by name or numeric id. Pass --spent to also log time on it in the same call (e.g. "mark dev completed and log 1h").')
     .option('--note <text>', 'Add a note alongside the status change')
     .option('--private', 'Mark the note as private')
     .option('--force', 'Bypass the required-CF block')
+    .option('--spent <duration>', 'Also log time on this issue after the status change, today (e.g. 30m, 1h, 1h30m, 0.25). Saves a separate `time log` call.')
+    .option('--activity <name>', 'Activity for the --spent entry (default: instance default activity)')
     .action(async function (this: Command, id: string, status: string) {
       const opts = this.opts<Record<string, unknown>>();
       await issueVerbs.statusVerb({ ...pickGlobals(this), id, status, ...opts });
@@ -974,6 +981,16 @@ function build(): Command {
       // descend covers every group.
       const root = (this.parent ?? this) as Command;
       await commandsCmdMod.commandsCmd(root)({ ...pickGlobals(this), filter: opts.filter });
+    });
+
+  // --- route (EXPERIMENTAL) ------------------------------------------------
+
+  program
+    .command('route <text...>')
+    .description('EXPERIMENTAL. Suggest which lwr command fulfils a natural-language request, decided by the TypeSafe Jev model (needs $JEV_API). Suggest-only — never executes. Returns command, usage, confidence, needsClarification, and action (run | confirm | ask). Sends only the request text + command catalog off-machine.')
+    .action(async function (this: Command, text: string[]) {
+      const root = (this.parent ?? this) as Command;
+      await routeCmdMod.routeCmd(root)({ ...pickGlobals(this), text });
     });
 
   // --- serve (MCP) --------------------------------------------------------

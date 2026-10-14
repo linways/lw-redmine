@@ -92,7 +92,8 @@ export function buildTools(program: Command): McpTool[] {
     // as MCP tools is silly: the agent already knows the tool list (it
     // just received it), and `serve` would loop the server back into
     // itself.
-    .filter(c => c.name !== 'commands' && c.name !== 'serve')
+    // `route` (experimental) is pointless over MCP: the calling agent IS the router.
+    .filter(c => c.name !== 'commands' && c.name !== 'serve' && c.name !== 'route')
     .map(c => serializeAsMcpTool(c, agentGlobals));
 }
 

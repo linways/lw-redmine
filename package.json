@@ -1,7 +1,7 @@
 {
   "name": "@linways/lw-redmine",
-  "version": "0.1.0",
-  "description": "lwr \u2014 Redmine CLI for AI agents",
+  "version": "0.2.0",
+  "description": "lwr — Redmine CLI for AI agents",
   "author": "Sibin C Baby <sibin@linways.com>",
   "homepage": "https://github.com/linways/lw-redmine#readme",
   "repository": {

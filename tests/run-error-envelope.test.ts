@@ -114,7 +114,7 @@ describe('runCommand error envelope (run.ts catch path)', () => {
     });
     expect(envelope.commandMeta).toEqual({
       safety: 'mutate',
-      idempotent: true,
+      idempotent: false,
       network: true,
     });
   });
